@@ -170,6 +170,9 @@ export default function DnsLookupTool() {
   const [reverseIP, setReverseIP] = useState('');
   const [reverseDNSResult, setReverseDNSResult] = useState(null);
   const [loadingReverse, setLoadingReverse] = useState(false);
+  const [sslInfo, setSslInfo] = useState(null);
+  const [loadingSSL, setLoadingSSL] = useState(false);
+  const [showSSL, setShowSSL] = useState(false);
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -509,6 +512,38 @@ export default function DnsLookupTool() {
       });
     } finally {
       setLoadingReverse(false);
+    }
+  };
+
+  // SSL Certificate Checker
+  const checkSSL = async () => {
+    if (!domain) return;
+
+    setLoadingSSL(true);
+    setShowSSL(true);
+    setSslInfo(null);
+
+    try {
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+      const response = await fetch(`/api/ssl-check?domain=${cleanDomain}`);
+      const data = await response.json();
+
+      if (response.ok) {
+        setSslInfo(data);
+      } else {
+        setSslInfo({
+          error: data.error || 'Failed to fetch SSL certificate info',
+          domain: cleanDomain
+        });
+      }
+    } catch (error) {
+      console.error('SSL check error:', error);
+      setSslInfo({
+        error: 'Network error',
+        domain: domain
+      });
+    } finally {
+      setLoadingSSL(false);
     }
   };
 
@@ -1370,6 +1405,13 @@ export default function DnsLookupTool() {
               >
                 {checkingPropagation ? 'Checking...' : 'Check Propagation'}
               </Button>
+              <Button
+                onClick={checkSSL}
+                disabled={loadingSSL}
+                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
+              >
+                {loadingSSL ? 'Checking...' : 'Check SSL/TLS'}
+              </Button>
             </div>
 
             {/* Reverse DNS Lookup Tool */}
@@ -1563,6 +1605,96 @@ export default function DnsLookupTool() {
                   ✓ Checked {propagationResults.length} DNS servers globally
                 </div>
               )}
+            </div>
+          )}
+
+          {/* SSL/TLS Certificate Information */}
+          {showSSL && (
+            <div className="mt-6 p-6 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
+              <h3 className="text-xl font-bold mb-4">SSL/TLS Certificate Information</h3>
+
+              {loadingSSL ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-20 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+                  ))}
+                </div>
+              ) : sslInfo?.error ? (
+                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <p className="text-red-700 dark:text-red-400">{sslInfo.error}</p>
+                </div>
+              ) : sslInfo?.certificates ? (
+                <div>
+                  {/* Most Recent Certificate Summary */}
+                  {sslInfo.mostRecentExpiry && (
+                    <div className={`mb-4 p-4 rounded-lg border-2 ${
+                      sslInfo.mostRecentExpiry.isExpired
+                        ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                        : sslInfo.mostRecentExpiry.isExpiringSoon
+                        ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                        : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-semibold text-lg">Certificate Status</h4>
+                          <p className="text-sm mt-1">
+                            {sslInfo.mostRecentExpiry.isExpired
+                              ? `❌ Expired ${Math.abs(sslInfo.mostRecentExpiry.daysRemaining)} days ago`
+                              : sslInfo.mostRecentExpiry.isExpiringSoon
+                              ? `⚠️ Expires in ${sslInfo.mostRecentExpiry.daysRemaining} days`
+                              : `✓ Valid for ${sslInfo.mostRecentExpiry.daysRemaining} more days`
+                            }
+                          </p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                          sslInfo.mostRecentExpiry.isExpired
+                            ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                            : sslInfo.mostRecentExpiry.isExpiringSoon
+                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                            : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                        }`}>
+                          {sslInfo.mostRecentExpiry.isExpired ? 'Expired' : sslInfo.mostRecentExpiry.isExpiringSoon ? 'Expiring Soon' : 'Valid'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Certificate List */}
+                  <h4 className="font-semibold mb-3">Recent Certificates ({sslInfo.certificates.length})</h4>
+                  <div className="space-y-3">
+                    {sslInfo.certificates.map((cert, idx) => (
+                      <div key={idx} className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
+                            <p className="font-mono break-all">{cert.commonName}</p>
+                          </div>
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
+                            <p className="text-xs break-all">{cert.issuer}</p>
+                          </div>
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
+                            <p>{new Date(cert.notBefore).toLocaleDateString()}</p>
+                          </div>
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
+                            <p>{new Date(cert.notAfter).toLocaleDateString()}</p>
+                          </div>
+                          <div className="md:col-span-2">
+                            <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
+                            <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 text-xs text-gray-600 dark:text-gray-400">
+                    Data from Certificate Transparency Logs (crt.sh)
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
 
