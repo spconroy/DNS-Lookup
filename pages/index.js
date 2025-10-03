@@ -560,144 +560,6 @@ export default function DnsLookupTool() {
         </div>
       )}
 
-      {/* SPF Record Summary */}
-      {spfSummary && (
-        <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-bold">SPF Record Analysis</h3>
-            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-              spfSummary.strength === 'Strong' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
-              spfSummary.strength === 'Moderate' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
-              'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-            }`}>
-              {spfSummary.strength}
-            </span>
-          </div>
-
-          <div className="mb-3">
-            <p className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 p-2 rounded break-all">
-              {spfSummary.raw}
-            </p>
-          </div>
-
-          <div className="mb-3">
-            <h4 className="font-semibold text-sm mb-2">Authorized Senders ({spfSummary.mechanisms.length}):</h4>
-            <div className="space-y-2">
-              {spfSummary.mechanisms.map((mech, i) => (
-                <div key={i} className="flex items-start gap-2 text-sm bg-white dark:bg-gray-800 p-2 rounded">
-                  <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                    mech.action === 'Pass' ? 'bg-green-100 text-green-800' :
-                    mech.action === 'Fail' ? 'bg-red-100 text-red-800' :
-                    mech.action === 'SoftFail' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {mech.action}
-                  </span>
-                  <span className="font-semibold text-blue-600 dark:text-blue-400 min-w-[100px]">{mech.type}:</span>
-                  <span className="text-gray-700 dark:text-gray-300 break-all">{mech.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {spfSummary.warnings.length > 0 && (
-            <div className="mt-3">
-              <h4 className="font-semibold text-red-600 text-sm mb-1">Warnings:</h4>
-              <ul className="list-disc list-inside text-sm space-y-1">
-                {spfSummary.warnings.map((warning, i) => (
-                  <li key={i} className="text-red-700 dark:text-red-400">{warning}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
-            <strong>Include count:</strong> {spfSummary.includeCount}/10 (DNS lookup limit)
-          </div>
-        </div>
-      )}
-
-      {/* DMARC Record Summary */}
-      {dmarcSummary && (
-        <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-bold">DMARC Record Analysis</h3>
-            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-              dmarcSummary.strength === 'Strong' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
-              dmarcSummary.strength === 'Moderate' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
-              'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-            }`}>
-              {dmarcSummary.strength}
-            </span>
-          </div>
-
-          <div className="mb-3">
-            <p className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 p-2 rounded break-all">
-              {dmarcSummary.raw}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-            <div className="bg-white dark:bg-gray-800 p-3 rounded">
-              <span className="text-xs text-gray-600 dark:text-gray-400">Policy:</span>
-              <p className={`text-lg font-bold ${
-                dmarcSummary.policy === 'reject' ? 'text-green-600' :
-                dmarcSummary.policy === 'quarantine' ? 'text-yellow-600' :
-                'text-red-600'
-              }`}>
-                {dmarcSummary.policy.toUpperCase()}
-              </p>
-            </div>
-
-            <div className="bg-white dark:bg-gray-800 p-3 rounded">
-              <span className="text-xs text-gray-600 dark:text-gray-400">Subdomain Policy:</span>
-              <p className={`text-lg font-bold ${
-                dmarcSummary.subdomainPolicy === 'reject' ? 'text-green-600' :
-                dmarcSummary.subdomainPolicy === 'quarantine' ? 'text-yellow-600' :
-                'text-red-600'
-              }`}>
-                {dmarcSummary.subdomainPolicy.toUpperCase()}
-              </p>
-            </div>
-
-            <div className="bg-white dark:bg-gray-800 p-3 rounded">
-              <span className="text-xs text-gray-600 dark:text-gray-400">Enforcement:</span>
-              <p className="text-lg font-bold text-gray-800 dark:text-gray-200">{dmarcSummary.percentage}</p>
-            </div>
-
-            <div className="bg-white dark:bg-gray-800 p-3 rounded">
-              <span className="text-xs text-gray-600 dark:text-gray-400">Alignment Mode:</span>
-              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                DKIM: {dmarcSummary.alignment.dkim === 'r' ? 'Relaxed' : 'Strict'}<br />
-                SPF: {dmarcSummary.alignment.spf === 'r' ? 'Relaxed' : 'Strict'}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-2 mb-3">
-            <div className="text-sm">
-              <span className="font-semibold">Aggregate Reports:</span>
-              <p className="text-gray-700 dark:text-gray-300 text-xs break-all">{dmarcSummary.aggregateReports}</p>
-            </div>
-            <div className="text-sm">
-              <span className="font-semibold">Forensic Reports:</span>
-              <p className="text-gray-700 dark:text-gray-300 text-xs break-all">{dmarcSummary.forensicReports}</p>
-            </div>
-          </div>
-
-          {dmarcSummary.warnings.length > 0 && (
-            <div className="mt-3">
-              <h4 className="font-semibold text-red-600 text-sm mb-1">Warnings:</h4>
-              <ul className="list-disc list-inside text-sm space-y-1">
-                {dmarcSummary.warnings.map((warning, i) => (
-                  <li key={i} className="text-red-700 dark:text-red-400">{warning}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
       {records.length > 0 && (
         <>
           {/* Filters and Export */}
@@ -810,6 +672,144 @@ export default function DnsLookupTool() {
           </div>
 
           <SecurityInsights securityStatus={securityStatus} />
+
+          {/* SPF Record Summary */}
+          {spfSummary && (
+            <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold">SPF Record Analysis</h3>
+                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                  spfSummary.strength === 'Strong' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+                  spfSummary.strength === 'Moderate' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+                  'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                }`}>
+                  {spfSummary.strength}
+                </span>
+              </div>
+
+              <div className="mb-3">
+                <p className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 p-2 rounded break-all">
+                  {spfSummary.raw}
+                </p>
+              </div>
+
+              <div className="mb-3">
+                <h4 className="font-semibold text-sm mb-2">Authorized Senders ({spfSummary.mechanisms.length}):</h4>
+                <div className="space-y-2">
+                  {spfSummary.mechanisms.map((mech, i) => (
+                    <div key={i} className="flex items-start gap-2 text-sm bg-white dark:bg-gray-800 p-2 rounded">
+                      <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                        mech.action === 'Pass' ? 'bg-green-100 text-green-800' :
+                        mech.action === 'Fail' ? 'bg-red-100 text-red-800' :
+                        mech.action === 'SoftFail' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {mech.action}
+                      </span>
+                      <span className="font-semibold text-blue-600 dark:text-blue-400 min-w-[100px]">{mech.type}:</span>
+                      <span className="text-gray-700 dark:text-gray-300 break-all">{mech.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {spfSummary.warnings.length > 0 && (
+                <div className="mt-3">
+                  <h4 className="font-semibold text-red-600 text-sm mb-1">Warnings:</h4>
+                  <ul className="list-disc list-inside text-sm space-y-1">
+                    {spfSummary.warnings.map((warning, i) => (
+                      <li key={i} className="text-red-700 dark:text-red-400">{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
+                <strong>Include count:</strong> {spfSummary.includeCount}/10 (DNS lookup limit)
+              </div>
+            </div>
+          )}
+
+          {/* DMARC Record Summary */}
+          {dmarcSummary && (
+            <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold">DMARC Record Analysis</h3>
+                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                  dmarcSummary.strength === 'Strong' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+                  dmarcSummary.strength === 'Moderate' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+                  'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                }`}>
+                  {dmarcSummary.strength}
+                </span>
+              </div>
+
+              <div className="mb-3">
+                <p className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 p-2 rounded break-all">
+                  {dmarcSummary.raw}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                <div className="bg-white dark:bg-gray-800 p-3 rounded">
+                  <span className="text-xs text-gray-600 dark:text-gray-400">Policy:</span>
+                  <p className={`text-lg font-bold ${
+                    dmarcSummary.policy === 'reject' ? 'text-green-600' :
+                    dmarcSummary.policy === 'quarantine' ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                    {dmarcSummary.policy.toUpperCase()}
+                  </p>
+                </div>
+
+                <div className="bg-white dark:bg-gray-800 p-3 rounded">
+                  <span className="text-xs text-gray-600 dark:text-gray-400">Subdomain Policy:</span>
+                  <p className={`text-lg font-bold ${
+                    dmarcSummary.subdomainPolicy === 'reject' ? 'text-green-600' :
+                    dmarcSummary.subdomainPolicy === 'quarantine' ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                    {dmarcSummary.subdomainPolicy.toUpperCase()}
+                  </p>
+                </div>
+
+                <div className="bg-white dark:bg-gray-800 p-3 rounded">
+                  <span className="text-xs text-gray-600 dark:text-gray-400">Enforcement:</span>
+                  <p className="text-lg font-bold text-gray-800 dark:text-gray-200">{dmarcSummary.percentage}</p>
+                </div>
+
+                <div className="bg-white dark:bg-gray-800 p-3 rounded">
+                  <span className="text-xs text-gray-600 dark:text-gray-400">Alignment Mode:</span>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                    DKIM: {dmarcSummary.alignment.dkim === 'r' ? 'Relaxed' : 'Strict'}<br />
+                    SPF: {dmarcSummary.alignment.spf === 'r' ? 'Relaxed' : 'Strict'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 mb-3">
+                <div className="text-sm">
+                  <span className="font-semibold">Aggregate Reports:</span>
+                  <p className="text-gray-700 dark:text-gray-300 text-xs break-all">{dmarcSummary.aggregateReports}</p>
+                </div>
+                <div className="text-sm">
+                  <span className="font-semibold">Forensic Reports:</span>
+                  <p className="text-gray-700 dark:text-gray-300 text-xs break-all">{dmarcSummary.forensicReports}</p>
+                </div>
+              </div>
+
+              {dmarcSummary.warnings.length > 0 && (
+                <div className="mt-3">
+                  <h4 className="font-semibold text-red-600 text-sm mb-1">Warnings:</h4>
+                  <ul className="list-disc list-inside text-sm space-y-1">
+                    {dmarcSummary.warnings.map((warning, i) => (
+                      <li key={i} className="text-red-700 dark:text-red-400">{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Keyboard Shortcuts Help */}
           <div className="mt-6 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-xs text-gray-600 dark:text-gray-400">
