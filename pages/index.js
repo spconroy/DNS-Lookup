@@ -179,6 +179,7 @@ export default function DnsLookupTool() {
   const [dnssecInfo, setDnssecInfo] = useState(null);
   const [loadingDnssec, setLoadingDnssec] = useState(false);
   const [showDnssec, setShowDnssec] = useState(false);
+  const [activeTab, setActiveTab] = useState('dns'); // dns, dnssec, ssl, whois, propagation
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -318,6 +319,7 @@ export default function DnsLookupTool() {
     setShowPropagation(false);
     setReverseDNSResult(null);
     setShowDNSMap(false);
+    setActiveTab('dns'); // Reset to DNS tab
 
     try {
       const response = await fetch(`/api/dns-lookup?domain=${cleanDomain}`);
@@ -386,6 +388,7 @@ export default function DnsLookupTool() {
     setShowPropagation(false);
     setReverseDNSResult(null);
     setShowDNSMap(false);
+    setActiveTab('dns'); // Reset to DNS tab
 
     const results = [];
 
@@ -638,6 +641,22 @@ export default function DnsLookupTool() {
       });
     } finally {
       setLoadingDnssec(false);
+    }
+  };
+
+  // Handle tab switching with auto-load
+  const handleTabSwitch = (tab) => {
+    setActiveTab(tab);
+
+    // Auto-load data when switching to a tab
+    if (tab === 'dnssec' && !dnssecInfo && !loadingDnssec) {
+      checkDnssec();
+    } else if (tab === 'ssl' && !sslInfo && !loadingSSL) {
+      checkSSL();
+    } else if (tab === 'whois' && !whoisInfo && !loadingWhois) {
+      checkWhois();
+    } else if (tab === 'propagation' && propagationResults.length === 0 && !checkingPropagation) {
+      checkPropagation();
     }
   };
 
@@ -1399,8 +1418,8 @@ export default function DnsLookupTool() {
         </div>
       )}
 
-      {/* Health Score */}
-      {healthScore && !compareMode && (
+      {/* Health Score - shown in DNS tab */}
+      {activeTab === 'dns' && healthScore && !compareMode && (
         <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-lg font-bold">DNS Health Score</h3>
@@ -1462,94 +1481,121 @@ export default function DnsLookupTool() {
 
       {records.length > 0 && !loading && (
         <>
-          {/* Filters and Export */}
-          <div className="flex flex-wrap justify-between items-center gap-4 mt-6">
-            <div className="flex gap-2">
-              <Button
-                onClick={handleExportCSV}
-                className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition duration-200"
+          {/* Tabs Navigation */}
+          <div className="mt-6 border-b border-gray-200 dark:border-gray-700">
+            <nav className="flex flex-wrap gap-2 -mb-px">
+              <button
+                onClick={() => handleTabSwitch('dns')}
+                className={`px-4 py-3 border-b-2 font-medium text-sm transition ${
+                  activeTab === 'dns'
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
               >
-                <Download className="mr-2 h-4 w-4" />
-                CSV
-              </Button>
-              <Button
-                onClick={handleExportJSON}
-                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition duration-200"
+                DNS Records
+              </button>
+              <button
+                onClick={() => handleTabSwitch('dnssec')}
+                className={`px-4 py-3 border-b-2 font-medium text-sm transition ${
+                  activeTab === 'dnssec'
+                    ? 'border-purple-500 text-purple-600 dark:text-purple-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
               >
-                <Download className="mr-2 h-4 w-4" />
-                JSON
-              </Button>
-              <Button
-                onClick={() => setShowFilters(!showFilters)}
-                className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg transition duration-200"
+                DNSSEC {loadingDnssec && <span className="ml-1">⟳</span>}
+              </button>
+              <button
+                onClick={() => handleTabSwitch('ssl')}
+                className={`px-4 py-3 border-b-2 font-medium text-sm transition ${
+                  activeTab === 'ssl'
+                    ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
               >
-                <Filter className="mr-2 h-4 w-4" />
-                Filters
-              </Button>
-              <Button
-                onClick={() => setShowDNSMap(!showDNSMap)}
-                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition duration-200"
+                SSL/TLS {loadingSSL && <span className="ml-1">⟳</span>}
+              </button>
+              <button
+                onClick={() => handleTabSwitch('whois')}
+                className={`px-4 py-3 border-b-2 font-medium text-sm transition ${
+                  activeTab === 'whois'
+                    ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
               >
-                {showDNSMap ? 'Hide' : 'Show'} DNS Map
-              </Button>
-              <Button
-                onClick={checkPropagation}
-                disabled={checkingPropagation}
-                className="px-4 py-2 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
+                WHOIS {loadingWhois && <span className="ml-1">⟳</span>}
+              </button>
+              <button
+                onClick={() => handleTabSwitch('propagation')}
+                className={`px-4 py-3 border-b-2 font-medium text-sm transition ${
+                  activeTab === 'propagation'
+                    ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
               >
-                {checkingPropagation ? 'Checking...' : 'Check Propagation'}
-              </Button>
-              <Button
-                onClick={checkSSL}
-                disabled={loadingSSL}
-                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
-              >
-                {loadingSSL ? 'Checking...' : 'Check SSL/TLS'}
-              </Button>
-              <Button
-                onClick={checkWhois}
-                disabled={loadingWhois}
-                className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
-              >
-                {loadingWhois ? 'Checking...' : 'WHOIS Lookup'}
-              </Button>
-              <Button
-                onClick={checkDnssec}
-                disabled={loadingDnssec}
-                className="px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
-              >
-                {loadingDnssec ? 'Checking...' : 'Check DNSSEC'}
-              </Button>
-            </div>
-
-            {/* Reverse DNS Lookup Tool */}
-            <div className="flex gap-2 items-center">
-              <input
-                type="text"
-                value={reverseIP}
-                onChange={(e) => setReverseIP(e.target.value)}
-                placeholder="Enter IP for reverse lookup"
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800"
-              />
-              <Button
-                onClick={handleReverseDNS}
-                disabled={loadingReverse}
-                className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200 whitespace-nowrap"
-              >
-                {loadingReverse ? 'Looking up...' : 'Reverse DNS'}
-              </Button>
-            </div>
+                Propagation {checkingPropagation && <span className="ml-1">⟳</span>}
+              </button>
+            </nav>
           </div>
 
-          <div>
-            <Input
-              className="w-full md:w-1/3 border border-gray-300 dark:border-gray-600 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-white"
-              type="text"
-              placeholder="Search records..."
-              value={filterValue}
-              onChange={(e) => setFilterValue(e.target.value)}
-            />
-          </div>
+          {/* DNS Tab Content */}
+          {activeTab === 'dns' && (
+            <>
+              {/* Tools Bar for DNS Tab */}
+              <div className="mt-6 flex flex-wrap gap-2 items-center">
+                <Button
+                  onClick={handleExportCSV}
+                  className="px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition text-sm"
+                >
+                  <Download className="mr-1 h-4 w-4" />
+                  CSV
+                </Button>
+                <Button
+                  onClick={handleExportJSON}
+                  className="px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition text-sm"
+                >
+                  <Download className="mr-1 h-4 w-4" />
+                  JSON
+                </Button>
+                <Button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="px-3 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg transition text-sm"
+                >
+                  <Filter className="mr-1 h-4 w-4" />
+                  Filters
+                </Button>
+                <Button
+                  onClick={() => setShowDNSMap(!showDNSMap)}
+                  className="px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition text-sm"
+                >
+                  {showDNSMap ? 'Hide' : 'Show'} DNS Map
+                </Button>
+                <div className="flex gap-2 items-center ml-auto">
+                  <input
+                    type="text"
+                    value={reverseIP}
+                    onChange={(e) => setReverseIP(e.target.value)}
+                    placeholder="Enter IP for reverse lookup"
+                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800"
+                  />
+                  <Button
+                    onClick={handleReverseDNS}
+                    disabled={loadingReverse}
+                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-400 text-white rounded-lg transition text-sm whitespace-nowrap"
+                  >
+                    {loadingReverse ? 'Looking up...' : 'Reverse DNS'}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <Input
+                  className="w-full md:w-1/3 border border-gray-300 dark:border-gray-600 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-white"
+                  type="text"
+                  placeholder="Search records..."
+                  value={filterValue}
+                  onChange={(e) => setFilterValue(e.target.value)}
+                />
+              </div>
 
           {/* Record Type Filters */}
           {showFilters && (
@@ -1659,9 +1705,21 @@ export default function DnsLookupTool() {
               </div>
             </div>
           )}
+            </>
+          )}
 
-          {/* DNS Propagation Results */}
-          {showPropagation && (
+          {/* Propagation Tab Content */}
+          {activeTab === 'propagation' && (
+            <>
+          {checkingPropagation && (
+            <div className="mt-6 space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-20 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+              ))}
+            </div>
+          )}
+
+          {propagationResults.length > 0 && (
             <div className="mt-6 p-6 bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-900/20 dark:to-cyan-900/20 rounded-lg border border-teal-200 dark:border-teal-800">
               <h3 className="text-xl font-bold mb-4">DNS Propagation Check</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
@@ -1716,9 +1774,21 @@ export default function DnsLookupTool() {
               )}
             </div>
           )}
+            </>
+          )}
 
-          {/* SSL/TLS Certificate Information */}
-          {showSSL && (
+          {/* SSL Tab Content */}
+          {activeTab === 'ssl' && (
+            <>
+          {loadingSSL && (
+            <div className="mt-6 space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-20 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+              ))}
+            </div>
+          )}
+
+          {sslInfo && (
             <div className="mt-6 p-6 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
               <h3 className="text-xl font-bold mb-4">SSL/TLS Certificate Information</h3>
 
@@ -1852,9 +1922,21 @@ export default function DnsLookupTool() {
               ) : null}
             </div>
           )}
+            </>
+          )}
 
-          {/* WHOIS Information */}
-          {showWhois && (
+          {/* WHOIS Tab Content */}
+          {activeTab === 'whois' && (
+            <>
+          {loadingWhois && (
+            <div className="mt-6 space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+              ))}
+            </div>
+          )}
+
+          {whoisInfo && (
             <div className="mt-6 p-6 bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/20 dark:to-blue-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
               <h3 className="text-xl font-bold mb-4">WHOIS Information</h3>
 
@@ -1966,9 +2048,13 @@ export default function DnsLookupTool() {
               ) : null}
             </div>
           )}
+            </>
+          )}
 
-          {/* DNSSEC Validation */}
-          {showDnssec && (
+          {/* DNSSEC Tab Content */}
+          {activeTab === 'dnssec' && (
+            <>
+          {dnssecInfo && (
             <div className="mt-6 p-6 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
               <h3 className="text-xl font-bold mb-4">DNSSEC Validation</h3>
 
@@ -2103,8 +2189,12 @@ export default function DnsLookupTool() {
               ) : null}
             </div>
           )}
+            </>
+          )}
 
-          {/* Records Table with Copy Buttons */}
+          {/* Records Table - shown only in DNS tab */}
+          {activeTab === 'dns' && records.length > 0 && !loading && (
+          <>
           <div className="mt-6 overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
@@ -2193,9 +2283,11 @@ export default function DnsLookupTool() {
           </div>
 
           <SecurityInsights securityStatus={securityStatus} />
+          </>
+          )}
 
-          {/* SPF Record Summary */}
-          {spfSummary && (
+          {/* SPF Record Summary - shown in DNS tab */}
+          {activeTab === 'dns' && spfSummary && (
             <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold">SPF Record Analysis</h3>
@@ -2251,8 +2343,8 @@ export default function DnsLookupTool() {
             </div>
           )}
 
-          {/* DMARC Record Summary */}
-          {dmarcSummary && (
+          {/* DMARC Record Summary - shown in DNS tab */}
+          {activeTab === 'dns' && dmarcSummary && (
             <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold">DMARC Record Analysis</h3>
