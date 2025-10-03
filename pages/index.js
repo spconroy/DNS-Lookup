@@ -1754,32 +1754,71 @@ export default function DnsLookupTool() {
                   {/* Certificate List */}
                   <h4 className="font-semibold mb-3">Recent Certificates ({sslInfo.certificates.length})</h4>
                   <div className="space-y-3">
-                    {sslInfo.certificates.map((cert, idx) => (
-                      <div key={idx} className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                          <div>
-                            <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
-                            <p className="font-mono break-all">{cert.commonName}</p>
+                    {sslInfo.certificates.map((cert, idx) => {
+                      const expiryDate = new Date(cert.notAfter);
+                      const now = new Date();
+                      const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
+                      const isExpired = daysUntilExpiry < 0;
+                      const isExpiringSoon = daysUntilExpiry < 30 && daysUntilExpiry >= 0;
+
+                      return (
+                        <div key={idx} className={`p-4 rounded-lg border-2 ${
+                          isExpired
+                            ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                            : isExpiringSoon
+                            ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                        }`}>
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                                isExpired
+                                  ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                  : isExpiringSoon
+                                  ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                                  : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                              }`}>
+                                {isExpired
+                                  ? `Expired ${Math.abs(daysUntilExpiry)} days ago`
+                                  : isExpiringSoon
+                                  ? `Expires in ${daysUntilExpiry} days`
+                                  : `Valid for ${daysUntilExpiry} more days`
+                                }
+                              </span>
+                            </div>
+                            {idx === 0 && (
+                              <span className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-1 rounded">
+                                Most Recent
+                              </span>
+                            )}
                           </div>
-                          <div>
-                            <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
-                            <p className="text-xs break-all">{cert.issuer}</p>
-                          </div>
-                          <div>
-                            <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
-                            <p>{new Date(cert.notBefore).toLocaleDateString()}</p>
-                          </div>
-                          <div>
-                            <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
-                            <p>{new Date(cert.notAfter).toLocaleDateString()}</p>
-                          </div>
-                          <div className="md:col-span-2">
-                            <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
-                            <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
+                              <p className="font-mono break-all">{cert.commonName}</p>
+                            </div>
+                            <div>
+                              <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
+                              <p className="text-xs break-all">{cert.issuer}</p>
+                            </div>
+                            <div>
+                              <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
+                              <p>{new Date(cert.notBefore).toLocaleDateString()}</p>
+                            </div>
+                            <div>
+                              <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
+                              <p className={isExpired ? 'text-red-600 dark:text-red-400 font-semibold' : ''}>
+                                {new Date(cert.notAfter).toLocaleDateString()}
+                              </p>
+                            </div>
+                            <div className="md:col-span-2">
+                              <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
+                              <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   <div className="mt-4 text-xs text-gray-600 dark:text-gray-400">
