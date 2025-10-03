@@ -706,8 +706,6 @@ export default function DnsLookupTool() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-900 rounded-lg shadow-lg">
-      <h1 className="text-4xl font-bold text-gray-800 dark:text-white mb-6 text-center">DNS Lookup Tool</h1>
-
       {/* Mode Toggle */}
       <div className="flex justify-center mb-4">
         <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 p-1">
