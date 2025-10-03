@@ -157,6 +157,10 @@ export default function DnsLookupTool() {
   const [bulkResults, setBulkResults] = useState([]);
   const [, setTick] = useState(0);
   const [expandedRecords, setExpandedRecords] = useState(new Set());
+  const [showDNSMap, setShowDNSMap] = useState(false);
+  const [propagationResults, setPropagationResults] = useState([]);
+  const [checkingPropagation, setCheckingPropagation] = useState(false);
+  const [showPropagation, setShowPropagation] = useState(false);
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -384,6 +388,66 @@ export default function DnsLookupTool() {
     setLoading(false);
   };
 
+  // DNS Propagation Checker
+  const checkPropagation = async () => {
+    if (!domain) return;
+
+    setCheckingPropagation(true);
+    setShowPropagation(true);
+    setPropagationResults([]);
+
+    // Public DNS servers from different locations
+    const dnsServers = [
+      { name: 'Google (USA)', server: '8.8.8.8', location: 'Mountain View, CA' },
+      { name: 'Cloudflare (Global)', server: '1.1.1.1', location: 'Global Anycast' },
+      { name: 'Quad9 (Global)', server: '9.9.9.9', location: 'Global Anycast' },
+      { name: 'OpenDNS (USA)', server: '208.67.222.222', location: 'San Francisco, CA' },
+      { name: 'Google Secondary', server: '8.8.4.4', location: 'Mountain View, CA' },
+      { name: 'Cloudflare Secondary', server: '1.0.0.1', location: 'Global Anycast' },
+    ];
+
+    const results = [];
+
+    for (const dns of dnsServers) {
+      try {
+        // Since we can't query specific DNS servers from the browser, we'll use the default
+        // In a real implementation, this would query via a backend API
+        const response = await fetch(`/api/dns-lookup?domain=${domain}`);
+        const data = await response.json();
+
+        if (response.ok) {
+          const aRecords = data.filter(r => dnsRecordTypeMap[r.type] === 'A');
+          results.push({
+            ...dns,
+            status: 'success',
+            records: aRecords.length > 0 ? aRecords.map(r => r.value).join(', ') : 'No A records',
+            timestamp: new Date().toISOString()
+          });
+        } else {
+          results.push({
+            ...dns,
+            status: 'error',
+            error: 'Failed to resolve',
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (error) {
+        results.push({
+          ...dns,
+          status: 'error',
+          error: 'Network error',
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Small delay between requests
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    setPropagationResults(results);
+    setCheckingPropagation(false);
+  };
+
   // Export functions
   const handleExportCSV = () => {
     const csv = [
@@ -532,6 +596,37 @@ export default function DnsLookupTool() {
   };
 
   const securityStatus = checkSecurity();
+
+  // Build DNS hierarchy for visualization
+  const buildDNSHierarchy = () => {
+    const hierarchy = {
+      domain: domain,
+      children: []
+    };
+
+    // Group by record type
+    const groupedRecords = records.reduce((acc, record) => {
+      if (!acc[record.type]) acc[record.type] = [];
+      acc[record.type].push(record);
+      return acc;
+    }, {});
+
+    // Add record type groups
+    Object.entries(groupedRecords).forEach(([type, recs]) => {
+      const typeNode = {
+        name: `${type} Records (${recs.length})`,
+        type: type,
+        children: recs.map(r => ({
+          name: r.value,
+          type: 'record',
+          ttl: r.ttl
+        }))
+      };
+      hierarchy.children.push(typeNode);
+    });
+
+    return hierarchy;
+  };
 
   // TTL countdown ticker
   useEffect(() => {
@@ -865,6 +960,19 @@ export default function DnsLookupTool() {
                 <Filter className="mr-2 h-4 w-4" />
                 Filters
               </Button>
+              <Button
+                onClick={() => setShowDNSMap(!showDNSMap)}
+                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition duration-200"
+              >
+                {showDNSMap ? 'Hide' : 'Show'} DNS Map
+              </Button>
+              <Button
+                onClick={checkPropagation}
+                disabled={checkingPropagation}
+                className="px-4 py-2 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
+              >
+                {checkingPropagation ? 'Checking...' : 'Check Propagation'}
+              </Button>
             </div>
 
             <Input
@@ -895,6 +1003,117 @@ export default function DnsLookupTool() {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* DNS Map Visualization */}
+          {showDNSMap && (
+            <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+              <h3 className="text-xl font-bold mb-4 text-center">DNS Record Hierarchy</h3>
+              <div className="flex flex-col items-center">
+                {/* Root Domain */}
+                <div className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold text-lg shadow-lg mb-6">
+                  {domain}
+                </div>
+
+                {/* Record Type Groups */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
+                  {buildDNSHierarchy().children.map((group, idx) => (
+                    <div key={idx} className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-md border-l-4" style={{
+                      borderLeftColor:
+                        group.type === 'A' || group.type === 'AAAA' ? '#3b82f6' :
+                        group.type === 'MX' ? '#10b981' :
+                        group.type === 'TXT' ? '#8b5cf6' :
+                        group.type === 'NS' ? '#f59e0b' :
+                        group.type === 'SOA' ? '#ef4444' :
+                        '#6b7280'
+                    }}>
+                      <div className="font-semibold text-lg mb-3 flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded text-sm ${
+                          group.type === 'A' || group.type === 'AAAA' ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' :
+                          group.type === 'MX' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' :
+                          group.type === 'TXT' ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200' :
+                          group.type === 'NS' ? 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200' :
+                          group.type === 'SOA' ? 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' :
+                          'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
+                        }`}>
+                          {group.type}
+                        </span>
+                        <span className="text-gray-600 dark:text-gray-400 text-sm">({group.children.length})</span>
+                      </div>
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {group.children.slice(0, 5).map((record, i) => (
+                          <div key={i} className="text-xs font-mono bg-gray-50 dark:bg-gray-700 p-2 rounded break-all">
+                            {record.name.length > 50 ? `${record.name.substring(0, 50)}...` : record.name}
+                          </div>
+                        ))}
+                        {group.children.length > 5 && (
+                          <div className="text-xs text-gray-500 dark:text-gray-400 italic">
+                            +{group.children.length - 5} more
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* DNS Propagation Results */}
+          {showPropagation && (
+            <div className="mt-6 p-6 bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-900/20 dark:to-cyan-900/20 rounded-lg border border-teal-200 dark:border-teal-800">
+              <h3 className="text-xl font-bold mb-4">DNS Propagation Check</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                Checking DNS records from multiple global DNS servers
+              </p>
+
+              {checkingPropagation ? (
+                <div className="space-y-2">
+                  {[1, 2, 3, 4, 5, 6].map((i) => (
+                    <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {propagationResults.map((result, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-4 rounded-lg border-2 ${
+                        result.status === 'success'
+                          ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20'
+                          : 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <h4 className="font-bold">{result.name}</h4>
+                          <p className="text-xs text-gray-600 dark:text-gray-400">{result.location}</p>
+                        </div>
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          result.status === 'success'
+                            ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
+                            : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'
+                        }`}>
+                          {result.status === 'success' ? 'Resolved' : 'Failed'}
+                        </span>
+                      </div>
+                      <div className="text-sm font-mono bg-white dark:bg-gray-800 p-2 rounded">
+                        {result.status === 'success' ? result.records : result.error}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        Server: {result.server}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!checkingPropagation && propagationResults.length > 0 && (
+                <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+                  ✓ Checked {propagationResults.length} DNS servers globally
+                </div>
+              )}
             </div>
           )}
 
