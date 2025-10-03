@@ -173,6 +173,12 @@ export default function DnsLookupTool() {
   const [sslInfo, setSslInfo] = useState(null);
   const [loadingSSL, setLoadingSSL] = useState(false);
   const [showSSL, setShowSSL] = useState(false);
+  const [whoisInfo, setWhoisInfo] = useState(null);
+  const [loadingWhois, setLoadingWhois] = useState(false);
+  const [showWhois, setShowWhois] = useState(false);
+  const [dnssecInfo, setDnssecInfo] = useState(null);
+  const [loadingDnssec, setLoadingDnssec] = useState(false);
+  const [showDnssec, setShowDnssec] = useState(false);
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -544,6 +550,70 @@ export default function DnsLookupTool() {
       });
     } finally {
       setLoadingSSL(false);
+    }
+  };
+
+  // WHOIS Lookup
+  const checkWhois = async () => {
+    if (!domain) return;
+
+    setLoadingWhois(true);
+    setShowWhois(true);
+    setWhoisInfo(null);
+
+    try {
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+      const response = await fetch(`/api/whois?domain=${cleanDomain}`);
+      const data = await response.json();
+
+      if (response.ok) {
+        setWhoisInfo(data);
+      } else {
+        setWhoisInfo({
+          error: data.error || 'Failed to fetch WHOIS info',
+          domain: cleanDomain
+        });
+      }
+    } catch (error) {
+      console.error('WHOIS check error:', error);
+      setWhoisInfo({
+        error: 'Network error',
+        domain: domain
+      });
+    } finally {
+      setLoadingWhois(false);
+    }
+  };
+
+  // DNSSEC Validation
+  const checkDnssec = async () => {
+    if (!domain) return;
+
+    setLoadingDnssec(true);
+    setShowDnssec(true);
+    setDnssecInfo(null);
+
+    try {
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+      const response = await fetch(`/api/dnssec?domain=${cleanDomain}`);
+      const data = await response.json();
+
+      if (response.ok) {
+        setDnssecInfo(data);
+      } else {
+        setDnssecInfo({
+          error: data.error || 'Failed to validate DNSSEC',
+          domain: cleanDomain
+        });
+      }
+    } catch (error) {
+      console.error('DNSSEC check error:', error);
+      setDnssecInfo({
+        error: 'Network error',
+        domain: domain
+      });
+    } finally {
+      setLoadingDnssec(false);
     }
   };
 
@@ -1412,6 +1482,20 @@ export default function DnsLookupTool() {
               >
                 {loadingSSL ? 'Checking...' : 'Check SSL/TLS'}
               </Button>
+              <Button
+                onClick={checkWhois}
+                disabled={loadingWhois}
+                className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
+              >
+                {loadingWhois ? 'Checking...' : 'WHOIS Lookup'}
+              </Button>
+              <Button
+                onClick={checkDnssec}
+                disabled={loadingDnssec}
+                className="px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200"
+              >
+                {loadingDnssec ? 'Checking...' : 'Check DNSSEC'}
+              </Button>
             </div>
 
             {/* Reverse DNS Lookup Tool */}
@@ -1699,6 +1783,257 @@ export default function DnsLookupTool() {
 
                   <div className="mt-4 text-xs text-gray-600 dark:text-gray-400">
                     Data from Certificate Transparency Logs (crt.sh)
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* WHOIS Information */}
+          {showWhois && (
+            <div className="mt-6 p-6 bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/20 dark:to-blue-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
+              <h3 className="text-xl font-bold mb-4">WHOIS Information</h3>
+
+              {/* Disclaimer */}
+              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 rounded">
+                <p className="text-sm text-blue-800 dark:text-blue-300">
+                  <strong>ℹ️ External API Notice:</strong> This feature queries WHOIS/RDAP databases via external APIs. The domain name will be sent to third-party services.
+                </p>
+              </div>
+
+              {loadingWhois ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+                  ))}
+                </div>
+              ) : whoisInfo?.error ? (
+                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <p className="text-red-700 dark:text-red-400">{whoisInfo.error}</p>
+                </div>
+              ) : whoisInfo ? (
+                <div className="space-y-4">
+                  {/* Domain Status */}
+                  <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <h4 className="font-semibold mb-3">Domain Information</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="font-semibold text-gray-600 dark:text-gray-400">Domain:</span>
+                        <p>{whoisInfo.domain}</p>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-gray-600 dark:text-gray-400">Registrar:</span>
+                        <p>{whoisInfo.registrar}</p>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-gray-600 dark:text-gray-400">Registrant:</span>
+                        <p>{whoisInfo.registrant}</p>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-gray-600 dark:text-gray-400">DNSSEC:</span>
+                        <p>{whoisInfo.dnssec}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Important Dates */}
+                  <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <h4 className="font-semibold mb-3">Important Dates</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                      {whoisInfo.createdDate && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Created:</span>
+                          <p>{new Date(whoisInfo.createdDate).toLocaleDateString()}</p>
+                        </div>
+                      )}
+                      {whoisInfo.updatedDate && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Updated:</span>
+                          <p>{new Date(whoisInfo.updatedDate).toLocaleDateString()}</p>
+                        </div>
+                      )}
+                      {whoisInfo.expiryDate && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Expires:</span>
+                          <p className={`${
+                            new Date(whoisInfo.expiryDate) - new Date() < 30 * 24 * 60 * 60 * 1000
+                              ? 'text-red-600 dark:text-red-400 font-semibold'
+                              : ''
+                          }`}>
+                            {new Date(whoisInfo.expiryDate).toLocaleDateString()}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Name Servers */}
+                  {whoisInfo.nameServers && whoisInfo.nameServers.length > 0 && (
+                    <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <h4 className="font-semibold mb-3">Name Servers ({whoisInfo.nameServers.length})</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                        {whoisInfo.nameServers.map((ns, idx) => (
+                          <div key={idx} className="font-mono text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded">
+                            {ns}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Domain Status */}
+                  {whoisInfo.status && whoisInfo.status.length > 0 && (
+                    <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <h4 className="font-semibold mb-3">Domain Status</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {whoisInfo.status.map((status, idx) => (
+                          <span key={idx} className="px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs rounded">
+                            {status}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
+                    Data source: {whoisInfo.source === 'rdap' ? 'RDAP (Registration Data Access Protocol)' : 'WHOIS'}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* DNSSEC Validation */}
+          {showDnssec && (
+            <div className="mt-6 p-6 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+              <h3 className="text-xl font-bold mb-4">DNSSEC Validation</h3>
+
+              {loadingDnssec ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+                  ))}
+                </div>
+              ) : dnssecInfo?.error ? (
+                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <p className="text-red-700 dark:text-red-400">{dnssecInfo.error}</p>
+                </div>
+              ) : dnssecInfo ? (
+                <div className="space-y-4">
+                  {/* DNSSEC Status */}
+                  <div className={`p-4 rounded-lg border-2 ${
+                    dnssecInfo.validation === 'fully_signed'
+                      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                      : dnssecInfo.validation === 'partially_signed'
+                      ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                      : 'bg-gray-50 dark:bg-gray-900/20 border-gray-200 dark:border-gray-800'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-semibold text-lg">DNSSEC Status</h4>
+                        <p className="text-sm mt-1">
+                          {dnssecInfo.validation === 'fully_signed'
+                            ? '✓ Fully signed with complete DNSSEC chain'
+                            : dnssecInfo.validation === 'partially_signed'
+                            ? '⚠️ Partially signed - some records missing'
+                            : '❌ Not signed - DNSSEC not configured'
+                          }
+                        </p>
+                      </div>
+                      <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                        dnssecInfo.validation === 'fully_signed'
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                          : dnssecInfo.validation === 'partially_signed'
+                          ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                          : 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200'
+                      }`}>
+                        {dnssecInfo.status === 'signed' ? 'Signed' : 'Unsigned'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Details */}
+                  {dnssecInfo.details && dnssecInfo.details.length > 0 && (
+                    <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <h4 className="font-semibold mb-3">Validation Details</h4>
+                      <ul className="space-y-2 text-sm">
+                        {dnssecInfo.details.map((detail, idx) => (
+                          <li key={idx} className="flex items-start">
+                            <span className="mr-2">{detail.includes('✓') || detail.includes('Using') ? '✓' : detail.includes('Missing') ? '⚠️' : '•'}</span>
+                            <span>{detail}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Record Summary */}
+                  <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <h4 className="font-semibold mb-3">DNSSEC Record Summary</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                      <div className="text-center p-2 bg-gray-50 dark:bg-gray-900 rounded">
+                        <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{dnssecInfo.summary?.recordCount?.DS || 0}</div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">DS Records</div>
+                      </div>
+                      <div className="text-center p-2 bg-gray-50 dark:bg-gray-900 rounded">
+                        <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{dnssecInfo.summary?.recordCount?.DNSKEY || 0}</div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">DNSKEY</div>
+                      </div>
+                      <div className="text-center p-2 bg-gray-50 dark:bg-gray-900 rounded">
+                        <div className="text-2xl font-bold text-green-600 dark:text-green-400">{dnssecInfo.summary?.recordCount?.RRSIG || 0}</div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">RRSIG</div>
+                      </div>
+                      <div className="text-center p-2 bg-gray-50 dark:bg-gray-900 rounded">
+                        <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{dnssecInfo.summary?.recordCount?.NSEC || 0}</div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">NSEC</div>
+                      </div>
+                      <div className="text-center p-2 bg-gray-50 dark:bg-gray-900 rounded">
+                        <div className="text-2xl font-bold text-pink-600 dark:text-pink-400">{dnssecInfo.summary?.recordCount?.NSEC3 || 0}</div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">NSEC3</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* DS Records */}
+                  {dnssecInfo.records?.ds && dnssecInfo.records.ds.length > 0 && (
+                    <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <h4 className="font-semibold mb-3">DS Records ({dnssecInfo.records.ds.length})</h4>
+                      <div className="space-y-2">
+                        {dnssecInfo.records.ds.map((ds, idx) => (
+                          <div key={idx} className="p-3 bg-gray-50 dark:bg-gray-900 rounded text-xs font-mono">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                              <div><span className="text-gray-600 dark:text-gray-400">Key Tag:</span> {ds.keyTag}</div>
+                              <div><span className="text-gray-600 dark:text-gray-400">Algorithm:</span> {ds.algorithm}</div>
+                              <div><span className="text-gray-600 dark:text-gray-400">Digest Type:</span> {ds.digestType}</div>
+                              <div className="md:col-span-4"><span className="text-gray-600 dark:text-gray-400">Digest:</span> {ds.digest}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* DNSKEY Records */}
+                  {dnssecInfo.records?.dnskey && dnssecInfo.records.dnskey.length > 0 && (
+                    <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <h4 className="font-semibold mb-3">DNSKEY Records ({dnssecInfo.records.dnskey.length})</h4>
+                      <div className="space-y-2">
+                        {dnssecInfo.records.dnskey.map((key, idx) => (
+                          <div key={idx} className="p-3 bg-gray-50 dark:bg-gray-900 rounded text-xs font-mono">
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                              <div><span className="text-gray-600 dark:text-gray-400">Flags:</span> {key.flags}</div>
+                              <div><span className="text-gray-600 dark:text-gray-400">Protocol:</span> {key.protocol}</div>
+                              <div><span className="text-gray-600 dark:text-gray-400">Algorithm:</span> {key.algorithm}</div>
+                              <div className="md:col-span-3"><span className="text-gray-600 dark:text-gray-400">Public Key:</span> {key.publicKey}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
+                    DNSSEC records queried via Cloudflare DNS-over-HTTPS
                   </div>
                 </div>
               ) : null}
