@@ -152,6 +152,11 @@ export default function DnsLookupTool() {
   const [healthScore, setHealthScore] = useState(null);
   const [spfSummary, setSpfSummary] = useState(null);
   const [dmarcSummary, setDmarcSummary] = useState(null);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkDomains, setBulkDomains] = useState('');
+  const [bulkResults, setBulkResults] = useState([]);
+  const [, setTick] = useState(0);
+  const [expandedRecords, setExpandedRecords] = useState(new Set());
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -288,7 +293,8 @@ export default function DnsLookupTool() {
         const mappedRecords = data.map(record => ({
           type: dnsRecordTypeMap[record.type] || record.type,
           value: record.value,
-          ttl: record.ttl
+          ttl: record.ttl,
+          timestamp: Date.now()
         }));
         setRecords(mappedRecords);
         addToHistory(cleanDomain);
@@ -318,6 +324,64 @@ export default function DnsLookupTool() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBulkLookup = async () => {
+    const domains = bulkDomains
+      .split('\n')
+      .map(d => d.trim())
+      .filter(d => d && validateDomain(d));
+
+    if (domains.length === 0) {
+      setValidationError('Please enter at least one valid domain');
+      return;
+    }
+
+    setLoading(true);
+    setBulkResults([]);
+    setValidationError('');
+
+    const results = [];
+
+    for (const domainName of domains) {
+      try {
+        const cleanDomain = domainName.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+        const response = await fetch(`/api/dns-lookup?domain=${cleanDomain}`);
+        const data = await response.json();
+
+        if (response.ok) {
+          const mappedRecords = data.map(record => ({
+            type: dnsRecordTypeMap[record.type] || record.type,
+            value: record.value,
+            ttl: record.ttl
+          }));
+
+          const health = calculateHealthScore(mappedRecords);
+
+          results.push({
+            domain: cleanDomain,
+            records: mappedRecords,
+            healthScore: health,
+            status: 'success'
+          });
+        } else {
+          results.push({
+            domain: cleanDomain,
+            error: data.error || 'Failed to fetch DNS records',
+            status: 'error'
+          });
+        }
+      } catch (error) {
+        results.push({
+          domain: domainName,
+          error: 'Network error',
+          status: 'error'
+        });
+      }
+    }
+
+    setBulkResults(results);
+    setLoading(false);
   };
 
   // Export functions
@@ -379,6 +443,77 @@ export default function DnsLookupTool() {
     setSelectedRecordTypes(newSet);
   };
 
+  // Toggle record expansion
+  const toggleRecordExpansion = (index) => {
+    const newSet = new Set(expandedRecords);
+    if (newSet.has(index)) {
+      newSet.delete(index);
+    } else {
+      newSet.add(index);
+    }
+    setExpandedRecords(newSet);
+  };
+
+  // Get record details for expansion
+  const getRecordDetails = (record) => {
+    const details = [];
+
+    // Type-specific details
+    if (record.type === 'MX') {
+      const parts = record.value.split(' ');
+      if (parts.length >= 2) {
+        details.push({ label: 'Priority', value: parts[0] });
+        details.push({ label: 'Mail Server', value: parts.slice(1).join(' ') });
+      }
+    } else if (record.type === 'SOA') {
+      const parts = record.value.split(' ');
+      if (parts.length >= 7) {
+        details.push({ label: 'Primary NS', value: parts[0] });
+        details.push({ label: 'Admin Email', value: parts[1] });
+        details.push({ label: 'Serial', value: parts[2] });
+        details.push({ label: 'Refresh', value: `${parts[3]}s` });
+        details.push({ label: 'Retry', value: `${parts[4]}s` });
+        details.push({ label: 'Expire', value: `${parts[5]}s` });
+        details.push({ label: 'Min TTL', value: `${parts[6]}s` });
+      }
+    } else if (record.type === 'SRV') {
+      const parts = record.value.split(' ');
+      if (parts.length >= 4) {
+        details.push({ label: 'Priority', value: parts[0] });
+        details.push({ label: 'Weight', value: parts[1] });
+        details.push({ label: 'Port', value: parts[2] });
+        details.push({ label: 'Target', value: parts[3] });
+      }
+    } else if (record.type === 'TXT') {
+      if (record.value.includes('v=spf1')) {
+        details.push({ label: 'Type', value: 'SPF Record' });
+        details.push({ label: 'Purpose', value: 'Email sender authentication' });
+      } else if (record.value.includes('v=DMARC1')) {
+        details.push({ label: 'Type', value: 'DMARC Record' });
+        details.push({ label: 'Purpose', value: 'Email authentication policy' });
+      } else if (record.value.includes('v=DKIM1')) {
+        details.push({ label: 'Type', value: 'DKIM Record' });
+        details.push({ label: 'Purpose', value: 'Email digital signature' });
+      }
+      details.push({ label: 'Length', value: `${record.value.length} characters` });
+    } else if (record.type === 'CAA') {
+      const parts = record.value.split(' ');
+      if (parts.length >= 3) {
+        details.push({ label: 'Flags', value: parts[0] });
+        details.push({ label: 'Tag', value: parts[1] });
+        details.push({ label: 'CA Domain', value: parts.slice(2).join(' ').replace(/"/g, '') });
+      }
+    }
+
+    // Common details for all records
+    details.push({ label: 'Original TTL', value: formatTTL(record.ttl) });
+    if (record.timestamp) {
+      details.push({ label: 'Fetched', value: new Date(record.timestamp).toLocaleString() });
+    }
+
+    return details;
+  };
+
   // Filter records
   const filteredRecords = records.filter(record => {
     const matchesType = selectedRecordTypes.has(record.type);
@@ -397,6 +532,43 @@ export default function DnsLookupTool() {
   };
 
   const securityStatus = checkSecurity();
+
+  // TTL countdown ticker
+  useEffect(() => {
+    if (records.length === 0) return;
+
+    const interval = setInterval(() => {
+      setTick(t => t + 1);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [records]);
+
+  // Calculate remaining TTL
+  const getRemainingTTL = (record) => {
+    if (!record.timestamp) return record.ttl;
+    const elapsed = Math.floor((Date.now() - record.timestamp) / 1000);
+    const remaining = record.ttl - elapsed;
+    return Math.max(0, remaining);
+  };
+
+  // Format TTL display
+  const formatTTL = (seconds) => {
+    if (seconds >= 86400) {
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      return `${days}d ${hours}h`;
+    } else if (seconds >= 3600) {
+      const hours = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      return `${hours}h ${mins}m`;
+    } else if (seconds >= 60) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}m ${secs}s`;
+    }
+    return `${seconds}s`;
+  };
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -441,17 +613,70 @@ export default function DnsLookupTool() {
     <div className="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-900 rounded-lg shadow-lg">
       <h1 className="text-4xl font-bold text-gray-800 dark:text-white mb-6 text-center">DNS Lookup Tool</h1>
 
-      {/* Input Section with History */}
-      <div className="relative">
-        <InputSection
-          domain={domain}
-          setDomain={(val) => {
-            setDomain(val);
-            validateDomain(val);
-          }}
-          handleLookup={() => handleLookup()}
-          loading={loading}
-        />
+      {/* Mode Toggle */}
+      <div className="flex justify-center mb-4">
+        <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 p-1">
+          <button
+            onClick={() => {
+              setBulkMode(false);
+              setBulkResults([]);
+            }}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+              !bulkMode
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-700 dark:text-gray-300'
+            }`}
+          >
+            Single Domain
+          </button>
+          <button
+            onClick={() => {
+              setBulkMode(true);
+              setRecords([]);
+              setHealthScore(null);
+            }}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+              bulkMode
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-700 dark:text-gray-300'
+            }`}
+          >
+            Bulk Lookup
+          </button>
+        </div>
+      </div>
+
+      {/* Bulk Mode Input */}
+      {bulkMode ? (
+        <div className="mb-6">
+          <label className="block text-sm font-medium mb-2">Enter domains (one per line)</label>
+          <textarea
+            value={bulkDomains}
+            onChange={(e) => setBulkDomains(e.target.value)}
+            placeholder="google.com&#10;github.com&#10;cloudflare.com"
+            className="w-full h-40 p-3 border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800"
+          />
+          <button
+            onClick={handleBulkLookup}
+            disabled={loading}
+            className="mt-3 w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition"
+          >
+            {loading ? 'Looking up...' : 'Lookup All Domains'}
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Input Section with History */}
+          <div className="relative">
+            <InputSection
+              domain={domain}
+              setDomain={(val) => {
+                setDomain(val);
+                validateDomain(val);
+              }}
+              handleLookup={() => handleLookup()}
+              loading={loading}
+            />
 
         {/* Validation Error */}
         {validationError && (
@@ -497,19 +722,61 @@ export default function DnsLookupTool() {
         )}
       </div>
 
-      {/* Example Domains */}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <span className="text-sm text-gray-600 dark:text-gray-400">Try:</span>
-        {EXAMPLE_DOMAINS.map((exampleDomain) => (
-          <button
-            key={exampleDomain}
-            onClick={() => handleLookup(exampleDomain)}
-            className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
-          >
-            {exampleDomain}
-          </button>
-        ))}
-      </div>
+          {/* Example Domains */}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <span className="text-sm text-gray-600 dark:text-gray-400">Try:</span>
+            {EXAMPLE_DOMAINS.map((exampleDomain) => (
+              <button
+                key={exampleDomain}
+                onClick={() => handleLookup(exampleDomain)}
+                className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+              >
+                {exampleDomain}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Bulk Results */}
+      {bulkMode && bulkResults.length > 0 && (
+        <div className="mt-6 space-y-4">
+          <h2 className="text-2xl font-bold">Results ({bulkResults.length} domains)</h2>
+          {bulkResults.map((result, idx) => (
+            <div
+              key={idx}
+              className={`p-4 border rounded-lg ${
+                result.status === 'success'
+                  ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20'
+                  : 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-bold text-lg">{result.domain}</h3>
+                {result.status === 'success' && result.healthScore && (
+                  <div className="flex items-center gap-2">
+                    <span className={`text-2xl font-bold ${
+                      result.healthScore.score >= 80 ? 'text-green-600' :
+                      result.healthScore.score >= 60 ? 'text-yellow-600' :
+                      'text-red-600'
+                    }`}>
+                      {result.healthScore.score}
+                    </span>
+                    <span className="text-sm text-gray-600 dark:text-gray-400">/100</span>
+                  </div>
+                )}
+              </div>
+              {result.status === 'error' ? (
+                <p className="text-red-600 dark:text-red-400">{result.error}</p>
+              ) : (
+                <div className="text-sm text-gray-700 dark:text-gray-300">
+                  {result.records.length} DNS records found
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Health Score */}
       {healthScore && (
@@ -560,7 +827,19 @@ export default function DnsLookupTool() {
         </div>
       )}
 
-      {records.length > 0 && (
+      {/* Skeleton Loader */}
+      {loading && (
+        <div className="mt-6 space-y-4 animate-pulse">
+          <div className="h-20 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
+          <div className="space-y-2">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {records.length > 0 && !loading && (
         <>
           {/* Filters and Export */}
           <div className="flex flex-wrap justify-between items-center gap-4 mt-6">
@@ -632,36 +911,72 @@ export default function DnsLookupTool() {
               </thead>
               <tbody>
                 {filteredRecords.map((record, index) => (
-                  <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm">
-                      <span className={`px-2 py-1 rounded ${
-                        record.type === 'A' || record.type === 'AAAA' ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' :
-                        record.type === 'MX' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' :
-                        record.type === 'TXT' ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200' :
-                        'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200'
-                      }`}>
-                        {record.type}
-                      </span>
-                    </td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm break-all">
-                      {record.value}
-                    </td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm">
-                      {record.ttl}s
-                    </td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-center">
-                      <button
-                        onClick={() => copyRecord(record.value, index)}
-                        className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-                      >
-                        {copiedIndex === index ? (
-                          <Check className="w-4 h-4 text-green-500" />
+                  <>
+                    <tr
+                      key={index}
+                      className="hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                      onClick={() => toggleRecordExpansion(index)}
+                    >
+                      <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm">
+                        <span className={`px-2 py-1 rounded ${
+                          record.type === 'A' || record.type === 'AAAA' ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' :
+                          record.type === 'MX' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' :
+                          record.type === 'TXT' ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200' :
+                          'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200'
+                        }`}>
+                          {record.type}
+                        </span>
+                      </td>
+                      <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm break-all">
+                        {record.value}
+                      </td>
+                      <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm">
+                        {record.timestamp ? (
+                          <div>
+                            <div className={`font-semibold ${
+                              getRemainingTTL(record) === 0 ? 'text-red-600' :
+                              getRemainingTTL(record) < 60 ? 'text-yellow-600' :
+                              'text-gray-800 dark:text-gray-200'
+                            }`}>
+                              {formatTTL(getRemainingTTL(record))}
+                            </div>
+                            <div className="text-xs text-gray-500">of {formatTTL(record.ttl)}</div>
+                          </div>
                         ) : (
-                          <Copy className="w-4 h-4" />
+                          `${record.ttl}s`
                         )}
-                      </button>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyRecord(record.value, index);
+                          }}
+                          className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                        >
+                          {copiedIndex === index ? (
+                            <Check className="w-4 h-4 text-green-500" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                    {expandedRecords.has(index) && (
+                      <tr key={`${index}-details`}>
+                        <td colSpan="4" className="border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-6 py-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {getRecordDetails(record).map((detail, i) => (
+                              <div key={i} className="flex items-start">
+                                <span className="font-semibold text-sm text-gray-600 dark:text-gray-400 min-w-[120px]">{detail.label}:</span>
+                                <span className="text-sm text-gray-800 dark:text-gray-200 break-all">{detail.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 ))}
               </tbody>
             </table>
