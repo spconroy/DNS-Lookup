@@ -36,9 +36,10 @@ export default async function handler(req) {
             });
         }
 
-        // Get the most recent certificate (newest first)
+        // Sort certificates by notBefore date (most recently issued first)
+        // This ensures we get the current/active certificate, not just recently logged ones
         const sortedCerts = certificates.sort((a, b) =>
-            new Date(b.entry_timestamp) - new Date(a.entry_timestamp)
+            new Date(b.not_before) - new Date(a.not_before)
         );
 
         // Get unique certificates by serial number (remove duplicates)
