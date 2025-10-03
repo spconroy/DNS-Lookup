@@ -37,6 +37,107 @@ const EXAMPLE_DOMAINS = [
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA', 'SRV', 'CAA'];
 
+// Parse SPF record
+const parseSPFRecord = (value) => {
+  if (!value.includes('v=spf1')) return null;
+
+  const mechanisms = [];
+  const qualifiers = { '+': 'Pass', '-': 'Fail', '~': 'SoftFail', '?': 'Neutral' };
+  const parts = value.split(' ');
+
+  parts.forEach(part => {
+    if (part === 'v=spf1') return;
+
+    const qualifier = qualifiers[part[0]] || 'Pass';
+    const mechanism = part.replace(/^[+\-~?]/, '');
+
+    if (mechanism.startsWith('ip4:')) {
+      mechanisms.push({ type: 'IPv4', value: mechanism.replace('ip4:', ''), action: qualifier });
+    } else if (mechanism.startsWith('ip6:')) {
+      mechanisms.push({ type: 'IPv6', value: mechanism.replace('ip6:', ''), action: qualifier });
+    } else if (mechanism.startsWith('include:')) {
+      mechanisms.push({ type: 'Include', value: mechanism.replace('include:', ''), action: qualifier });
+    } else if (mechanism.startsWith('a:')) {
+      mechanisms.push({ type: 'A Record', value: mechanism.replace('a:', ''), action: qualifier });
+    } else if (mechanism === 'a') {
+      mechanisms.push({ type: 'A Record', value: 'Current domain', action: qualifier });
+    } else if (mechanism.startsWith('mx:')) {
+      mechanisms.push({ type: 'MX Record', value: mechanism.replace('mx:', ''), action: qualifier });
+    } else if (mechanism === 'mx') {
+      mechanisms.push({ type: 'MX Record', value: 'Current domain', action: qualifier });
+    } else if (mechanism.startsWith('redirect=')) {
+      mechanisms.push({ type: 'Redirect', value: mechanism.replace('redirect=', ''), action: 'Redirect' });
+    } else if (mechanism === 'all') {
+      mechanisms.push({ type: 'All Others', value: 'Default policy', action: qualifier });
+    } else if (mechanism.startsWith('exists:')) {
+      mechanisms.push({ type: 'Exists', value: mechanism.replace('exists:', ''), action: qualifier });
+    } else if (mechanism.startsWith('ptr:')) {
+      mechanisms.push({ type: 'PTR (Deprecated)', value: mechanism.replace('ptr:', ''), action: qualifier });
+    }
+  });
+
+  const hasHardFail = mechanisms.some(m => m.action === 'Fail');
+  const hasSoftFail = mechanisms.some(m => m.action === 'SoftFail');
+  const includeCount = mechanisms.filter(m => m.type === 'Include').length;
+
+  return {
+    raw: value,
+    mechanisms,
+    strength: hasHardFail ? 'Strong' : hasSoftFail ? 'Moderate' : 'Weak',
+    includeCount,
+    warnings: [
+      includeCount > 10 ? 'Too many includes (DNS lookup limit is 10)' : null,
+      !hasHardFail && !hasSoftFail ? 'No fail policy for unauthorized senders' : null,
+      mechanisms.some(m => m.type === 'PTR (Deprecated)') ? 'PTR mechanism is deprecated' : null,
+    ].filter(Boolean)
+  };
+};
+
+// Parse DMARC record
+const parseDMARCRecord = (value) => {
+  if (!value.includes('v=DMARC1')) return null;
+
+  const tags = {};
+  const parts = value.split(';').map(p => p.trim()).filter(Boolean);
+
+  parts.forEach(part => {
+    const [key, val] = part.split('=').map(s => s.trim());
+    if (key && val) tags[key] = val;
+  });
+
+  const policy = tags.p || 'none';
+  const subdomainPolicy = tags.sp || policy;
+  const percentage = tags.pct || '100';
+  const alignment = {
+    dkim: tags.adkim || 'r',
+    spf: tags.aspf || 'r'
+  };
+
+  const strength =
+    policy === 'reject' ? 'Strong' :
+    policy === 'quarantine' ? 'Moderate' :
+    'Weak';
+
+  const warnings = [
+    policy === 'none' ? 'Policy set to "none" - emails are not protected' : null,
+    !tags.rua ? 'No aggregate reports configured (rua tag missing)' : null,
+    percentage !== '100' ? `Only ${percentage}% of emails are subject to the policy` : null,
+    alignment.dkim === 'r' && alignment.spf === 'r' ? 'Both DKIM and SPF using relaxed alignment' : null,
+  ].filter(Boolean);
+
+  return {
+    raw: value,
+    policy,
+    subdomainPolicy,
+    percentage: `${percentage}%`,
+    alignment,
+    aggregateReports: tags.rua || 'Not configured',
+    forensicReports: tags.ruf || 'Not configured',
+    strength,
+    warnings
+  };
+};
+
 export default function DnsLookupTool() {
   const [domain, setDomain] = useState('');
   const [records, setRecords] = useState([]);
@@ -49,6 +150,8 @@ export default function DnsLookupTool() {
   const [showFilters, setShowFilters] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [healthScore, setHealthScore] = useState(null);
+  const [spfSummary, setSpfSummary] = useState(null);
+  const [dmarcSummary, setDmarcSummary] = useState(null);
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -174,6 +277,8 @@ export default function DnsLookupTool() {
     setLoading(true);
     setRecords([]);
     setHealthScore(null);
+    setSpfSummary(null);
+    setDmarcSummary(null);
 
     try {
       const response = await fetch(`/api/dns-lookup?domain=${cleanDomain}`);
@@ -191,6 +296,18 @@ export default function DnsLookupTool() {
         // Calculate health score
         const health = calculateHealthScore(mappedRecords);
         setHealthScore(health);
+
+        // Parse SPF and DMARC records
+        const spfRecord = mappedRecords.find(r => r.type === 'TXT' && r.value.includes('v=spf1'));
+        const dmarcRecord = mappedRecords.find(r => r.type === 'TXT' && r.value.includes('v=DMARC1'));
+
+        if (spfRecord) {
+          setSpfSummary(parseSPFRecord(spfRecord.value));
+        }
+
+        if (dmarcRecord) {
+          setDmarcSummary(parseDMARCRecord(dmarcRecord.value));
+        }
       } else {
         console.error('Error fetching DNS records:', data.error);
         setValidationError(data.error || 'Failed to fetch DNS records');
@@ -436,6 +553,144 @@ export default function DnsLookupTool() {
               <ul className="list-disc list-inside text-sm space-y-1">
                 {healthScore.recommendations.map((rec, i) => (
                   <li key={i} className="text-blue-700 dark:text-blue-400">{rec}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SPF Record Summary */}
+      {spfSummary && (
+        <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-bold">SPF Record Analysis</h3>
+            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+              spfSummary.strength === 'Strong' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+              spfSummary.strength === 'Moderate' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+              'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+            }`}>
+              {spfSummary.strength}
+            </span>
+          </div>
+
+          <div className="mb-3">
+            <p className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 p-2 rounded break-all">
+              {spfSummary.raw}
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <h4 className="font-semibold text-sm mb-2">Authorized Senders ({spfSummary.mechanisms.length}):</h4>
+            <div className="space-y-2">
+              {spfSummary.mechanisms.map((mech, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm bg-white dark:bg-gray-800 p-2 rounded">
+                  <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                    mech.action === 'Pass' ? 'bg-green-100 text-green-800' :
+                    mech.action === 'Fail' ? 'bg-red-100 text-red-800' :
+                    mech.action === 'SoftFail' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {mech.action}
+                  </span>
+                  <span className="font-semibold text-blue-600 dark:text-blue-400 min-w-[100px]">{mech.type}:</span>
+                  <span className="text-gray-700 dark:text-gray-300 break-all">{mech.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {spfSummary.warnings.length > 0 && (
+            <div className="mt-3">
+              <h4 className="font-semibold text-red-600 text-sm mb-1">Warnings:</h4>
+              <ul className="list-disc list-inside text-sm space-y-1">
+                {spfSummary.warnings.map((warning, i) => (
+                  <li key={i} className="text-red-700 dark:text-red-400">{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
+            <strong>Include count:</strong> {spfSummary.includeCount}/10 (DNS lookup limit)
+          </div>
+        </div>
+      )}
+
+      {/* DMARC Record Summary */}
+      {dmarcSummary && (
+        <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-bold">DMARC Record Analysis</h3>
+            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+              dmarcSummary.strength === 'Strong' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+              dmarcSummary.strength === 'Moderate' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+              'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+            }`}>
+              {dmarcSummary.strength}
+            </span>
+          </div>
+
+          <div className="mb-3">
+            <p className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 p-2 rounded break-all">
+              {dmarcSummary.raw}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+            <div className="bg-white dark:bg-gray-800 p-3 rounded">
+              <span className="text-xs text-gray-600 dark:text-gray-400">Policy:</span>
+              <p className={`text-lg font-bold ${
+                dmarcSummary.policy === 'reject' ? 'text-green-600' :
+                dmarcSummary.policy === 'quarantine' ? 'text-yellow-600' :
+                'text-red-600'
+              }`}>
+                {dmarcSummary.policy.toUpperCase()}
+              </p>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 p-3 rounded">
+              <span className="text-xs text-gray-600 dark:text-gray-400">Subdomain Policy:</span>
+              <p className={`text-lg font-bold ${
+                dmarcSummary.subdomainPolicy === 'reject' ? 'text-green-600' :
+                dmarcSummary.subdomainPolicy === 'quarantine' ? 'text-yellow-600' :
+                'text-red-600'
+              }`}>
+                {dmarcSummary.subdomainPolicy.toUpperCase()}
+              </p>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 p-3 rounded">
+              <span className="text-xs text-gray-600 dark:text-gray-400">Enforcement:</span>
+              <p className="text-lg font-bold text-gray-800 dark:text-gray-200">{dmarcSummary.percentage}</p>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 p-3 rounded">
+              <span className="text-xs text-gray-600 dark:text-gray-400">Alignment Mode:</span>
+              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                DKIM: {dmarcSummary.alignment.dkim === 'r' ? 'Relaxed' : 'Strict'}<br />
+                SPF: {dmarcSummary.alignment.spf === 'r' ? 'Relaxed' : 'Strict'}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 mb-3">
+            <div className="text-sm">
+              <span className="font-semibold">Aggregate Reports:</span>
+              <p className="text-gray-700 dark:text-gray-300 text-xs break-all">{dmarcSummary.aggregateReports}</p>
+            </div>
+            <div className="text-sm">
+              <span className="font-semibold">Forensic Reports:</span>
+              <p className="text-gray-700 dark:text-gray-300 text-xs break-all">{dmarcSummary.forensicReports}</p>
+            </div>
+          </div>
+
+          {dmarcSummary.warnings.length > 0 && (
+            <div className="mt-3">
+              <h4 className="font-semibold text-red-600 text-sm mb-1">Warnings:</h4>
+              <ul className="list-disc list-inside text-sm space-y-1">
+                {dmarcSummary.warnings.map((warning, i) => (
+                  <li key={i} className="text-red-700 dark:text-red-400">{warning}</li>
                 ))}
               </ul>
             </div>
