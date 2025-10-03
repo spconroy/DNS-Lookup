@@ -167,6 +167,9 @@ export default function DnsLookupTool() {
   const [records2, setRecords2] = useState([]);
   const [healthScore2, setHealthScore2] = useState(null);
   const [loading2, setLoading2] = useState(false);
+  const [reverseIP, setReverseIP] = useState('');
+  const [reverseDNSResult, setReverseDNSResult] = useState(null);
+  const [loadingReverse, setLoadingReverse] = useState(false);
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -433,6 +436,79 @@ export default function DnsLookupTool() {
       console.error('Error fetching DNS records for domain 2:', error);
     } finally {
       setLoading2(false);
+    }
+  };
+
+  // Reverse DNS Lookup
+  const handleReverseDNS = async () => {
+    if (!reverseIP.trim()) {
+      setValidationError('Please enter an IP address');
+      return;
+    }
+
+    // Validate IP address format
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})$/;
+
+    if (!ipv4Regex.test(reverseIP) && !ipv6Regex.test(reverseIP)) {
+      setValidationError('Invalid IP address format');
+      return;
+    }
+
+    setLoadingReverse(true);
+    setReverseDNSResult(null);
+    setValidationError('');
+
+    try {
+      // Construct reverse DNS domain
+      let reverseDomain;
+      if (ipv4Regex.test(reverseIP)) {
+        // IPv4: reverse octets and add .in-addr.arpa
+        const octets = reverseIP.split('.');
+        reverseDomain = `${octets[3]}.${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`;
+      } else {
+        // IPv6: reverse nibbles and add .ip6.arpa (simplified)
+        setValidationError('IPv6 reverse lookup not yet supported');
+        setLoadingReverse(false);
+        return;
+      }
+
+      // Lookup PTR record
+      const response = await fetch(`/api/dns-lookup?domain=${reverseDomain}`);
+      const data = await response.json();
+
+      if (response.ok) {
+        const ptrRecords = data.filter(r => dnsRecordTypeMap[r.type] === 'PTR');
+
+        if (ptrRecords.length > 0) {
+          setReverseDNSResult({
+            ip: reverseIP,
+            hostnames: ptrRecords.map(r => r.value),
+            status: 'success'
+          });
+        } else {
+          setReverseDNSResult({
+            ip: reverseIP,
+            error: 'No PTR records found',
+            status: 'no_records'
+          });
+        }
+      } else {
+        setReverseDNSResult({
+          ip: reverseIP,
+          error: 'Failed to perform reverse DNS lookup',
+          status: 'error'
+        });
+      }
+    } catch (error) {
+      console.error('Reverse DNS lookup error:', error);
+      setReverseDNSResult({
+        ip: reverseIP,
+        error: 'Network error',
+        status: 'error'
+      });
+    } finally {
+      setLoadingReverse(false);
     }
   };
 
@@ -1296,6 +1372,25 @@ export default function DnsLookupTool() {
               </Button>
             </div>
 
+            {/* Reverse DNS Lookup Tool */}
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={reverseIP}
+                onChange={(e) => setReverseIP(e.target.value)}
+                placeholder="Enter IP for reverse lookup"
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800"
+              />
+              <Button
+                onClick={handleReverseDNS}
+                disabled={loadingReverse}
+                className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-400 text-white rounded-lg transition duration-200 whitespace-nowrap"
+              >
+                {loadingReverse ? 'Looking up...' : 'Reverse DNS'}
+              </Button>
+            </div>
+          </div>
+
             <Input
               className="w-full md:w-1/3 border border-gray-300 dark:border-gray-600 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-white"
               type="text"
@@ -1324,6 +1419,39 @@ export default function DnsLookupTool() {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Reverse DNS Results */}
+          {reverseDNSResult && (
+            <div className={`mt-4 p-4 rounded-lg border-2 ${
+              reverseDNSResult.status === 'success'
+                ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                : reverseDNSResult.status === 'no_records'
+                ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+            }`}>
+              <h4 className="font-semibold mb-2">Reverse DNS Lookup for {reverseDNSResult.ip}</h4>
+              {reverseDNSResult.status === 'success' ? (
+                <div>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Hostname(s):</p>
+                  <div className="space-y-1">
+                    {reverseDNSResult.hostnames.map((hostname, idx) => (
+                      <div key={idx} className="p-2 bg-white dark:bg-gray-800 rounded font-mono text-sm">
+                        {hostname}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className={`text-sm ${
+                  reverseDNSResult.status === 'no_records'
+                    ? 'text-yellow-700 dark:text-yellow-400'
+                    : 'text-red-700 dark:text-red-400'
+                }`}>
+                  {reverseDNSResult.error}
+                </p>
+              )}
             </div>
           )}
 
