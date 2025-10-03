@@ -713,8 +713,8 @@ export default function DnsLookupTool() {
       { name: 'Cloudflare (Global)', server: '1.1.1.1', location: 'Global Anycast' },
       { name: 'Quad9 (Global)', server: '9.9.9.9', location: 'Global Anycast' },
       { name: 'OpenDNS (USA)', server: '208.67.222.222', location: 'San Francisco, CA' },
-      { name: 'Google Secondary', server: '8.8.4.4', location: 'Mountain View, CA' },
-      { name: 'Cloudflare Secondary', server: '1.0.0.1', location: 'Global Anycast' },
+      { name: 'Verisign (USA)', server: '64.6.64.6', location: 'Reston, VA' },
+      { name: 'AdGuard (Global)', server: '94.140.14.14', location: 'Global Anycast' },
     ];
 
     const results = [];
