@@ -161,6 +161,7 @@ export default function DnsLookupTool() {
   const [propagationResults, setPropagationResults] = useState([]);
   const [checkingPropagation, setCheckingPropagation] = useState(false);
   const [showPropagation, setShowPropagation] = useState(false);
+  const [expandedBulkResults, setExpandedBulkResults] = useState(new Set());
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -518,6 +519,17 @@ export default function DnsLookupTool() {
     setExpandedRecords(newSet);
   };
 
+  // Toggle bulk result expansion
+  const toggleBulkResultExpansion = (index) => {
+    const newSet = new Set(expandedBulkResults);
+    if (newSet.has(index)) {
+      newSet.delete(index);
+    } else {
+      newSet.add(index);
+    }
+    setExpandedBulkResults(newSet);
+  };
+
   // Get record details for expansion
   const getRecordDetails = (record) => {
     const details = [];
@@ -838,32 +850,109 @@ export default function DnsLookupTool() {
           {bulkResults.map((result, idx) => (
             <div
               key={idx}
-              className={`p-4 border rounded-lg ${
+              className={`border rounded-lg ${
                 result.status === 'success'
                   ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20'
                   : 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20'
               }`}
             >
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-bold text-lg">{result.domain}</h3>
-                {result.status === 'success' && result.healthScore && (
-                  <div className="flex items-center gap-2">
-                    <span className={`text-2xl font-bold ${
-                      result.healthScore.score >= 80 ? 'text-green-600' :
-                      result.healthScore.score >= 60 ? 'text-yellow-600' :
-                      'text-red-600'
-                    }`}>
-                      {result.healthScore.score}
+              <div
+                className="p-4 cursor-pointer hover:bg-opacity-80 transition"
+                onClick={() => toggleBulkResultExpansion(idx)}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-lg">{result.domain}</h3>
+                  <div className="flex items-center gap-3">
+                    {result.status === 'success' && result.healthScore && (
+                      <div className="flex items-center gap-2">
+                        <span className={`text-2xl font-bold ${
+                          result.healthScore.score >= 80 ? 'text-green-600' :
+                          result.healthScore.score >= 60 ? 'text-yellow-600' :
+                          'text-red-600'
+                        }`}>
+                          {result.healthScore.score}
+                        </span>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">/100</span>
+                      </div>
+                    )}
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {expandedBulkResults.has(idx) ? '▼' : '▶'}
                     </span>
-                    <span className="text-sm text-gray-600 dark:text-gray-400">/100</span>
+                  </div>
+                </div>
+                {result.status === 'error' ? (
+                  <p className="text-red-600 dark:text-red-400">{result.error}</p>
+                ) : (
+                  <div className="text-sm text-gray-700 dark:text-gray-300">
+                    {result.records.length} DNS records found
                   </div>
                 )}
               </div>
-              {result.status === 'error' ? (
-                <p className="text-red-600 dark:text-red-400">{result.error}</p>
-              ) : (
-                <div className="text-sm text-gray-700 dark:text-gray-300">
-                  {result.records.length} DNS records found
+
+              {/* Expanded Details */}
+              {expandedBulkResults.has(idx) && result.status === 'success' && (
+                <div className="border-t border-gray-300 dark:border-gray-600 p-4 bg-white dark:bg-gray-800">
+                  {/* Health Score Details */}
+                  {result.healthScore && (
+                    <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                      <h4 className="font-semibold mb-2 text-sm">Health Analysis</h4>
+                      {result.healthScore.issues.length > 0 && (
+                        <div className="mb-2">
+                          <p className="text-xs font-semibold text-red-600">Issues:</p>
+                          <ul className="list-disc list-inside text-xs space-y-1">
+                            {result.healthScore.issues.map((issue, i) => (
+                              <li key={i} className="text-red-700 dark:text-red-400">{issue}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {result.healthScore.recommendations.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-blue-600">Recommendations:</p>
+                          <ul className="list-disc list-inside text-xs space-y-1">
+                            {result.healthScore.recommendations.map((rec, i) => (
+                              <li key={i} className="text-blue-700 dark:text-blue-400">{rec}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* DNS Records Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-sm">
+                      <thead>
+                        <tr className="bg-gray-100 dark:bg-gray-700">
+                          <th className="border border-gray-300 dark:border-gray-600 px-3 py-2 text-left">Type</th>
+                          <th className="border border-gray-300 dark:border-gray-600 px-3 py-2 text-left">Value</th>
+                          <th className="border border-gray-300 dark:border-gray-600 px-3 py-2 text-left">TTL</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.records.map((record, recIdx) => (
+                          <tr key={recIdx} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                            <td className="border border-gray-300 dark:border-gray-600 px-3 py-2 font-mono text-xs">
+                              <span className={`px-2 py-1 rounded ${
+                                record.type === 'A' || record.type === 'AAAA' ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' :
+                                record.type === 'MX' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' :
+                                record.type === 'TXT' ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200' :
+                                'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200'
+                              }`}>
+                                {record.type}
+                              </span>
+                            </td>
+                            <td className="border border-gray-300 dark:border-gray-600 px-3 py-2 font-mono text-xs break-all">
+                              {record.value}
+                            </td>
+                            <td className="border border-gray-300 dark:border-gray-600 px-3 py-2 font-mono text-xs">
+                              {record.ttl}s
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
