@@ -162,6 +162,11 @@ export default function DnsLookupTool() {
   const [checkingPropagation, setCheckingPropagation] = useState(false);
   const [showPropagation, setShowPropagation] = useState(false);
   const [expandedBulkResults, setExpandedBulkResults] = useState(new Set());
+  const [compareMode, setCompareMode] = useState(false);
+  const [domain2, setDomain2] = useState('');
+  const [records2, setRecords2] = useState([]);
+  const [healthScore2, setHealthScore2] = useState(null);
+  const [loading2, setLoading2] = useState(false);
 
   // Load recent lookups from localStorage
   useEffect(() => {
@@ -387,6 +392,48 @@ export default function DnsLookupTool() {
 
     setBulkResults(results);
     setLoading(false);
+  };
+
+  // Handle comparison lookup
+  const handleCompareLookup = async () => {
+    if (!validateDomain(domain) || !validateDomain(domain2)) {
+      setValidationError('Please enter two valid domains to compare');
+      return;
+    }
+
+    // Lookup first domain
+    setLoading(true);
+    setRecords([]);
+    setHealthScore(null);
+    await handleLookup(domain);
+
+    // Lookup second domain
+    setLoading2(true);
+    setRecords2([]);
+    setHealthScore2(null);
+
+    try {
+      const cleanDomain2 = domain2.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+      const response = await fetch(`/api/dns-lookup?domain=${cleanDomain2}`);
+      const data = await response.json();
+
+      if (response.ok) {
+        const mappedRecords = data.map(record => ({
+          type: dnsRecordTypeMap[record.type] || record.type,
+          value: record.value,
+          ttl: record.ttl,
+          timestamp: Date.now()
+        }));
+        setRecords2(mappedRecords);
+
+        const health = calculateHealthScore(mappedRecords);
+        setHealthScore2(health);
+      }
+    } catch (error) {
+      console.error('Error fetching DNS records for domain 2:', error);
+    } finally {
+      setLoading2(false);
+    }
   };
 
   // DNS Propagation Checker
@@ -724,10 +771,13 @@ export default function DnsLookupTool() {
           <button
             onClick={() => {
               setBulkMode(false);
+              setCompareMode(false);
               setBulkResults([]);
+              setRecords2([]);
+              setHealthScore2(null);
             }}
             className={`px-4 py-2 rounded-md text-sm font-medium transition ${
-              !bulkMode
+              !bulkMode && !compareMode
                 ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                 : 'text-gray-700 dark:text-gray-300'
             }`}
@@ -736,9 +786,30 @@ export default function DnsLookupTool() {
           </button>
           <button
             onClick={() => {
-              setBulkMode(true);
+              setBulkMode(false);
+              setCompareMode(true);
+              setBulkResults([]);
               setRecords([]);
+              setRecords2([]);
               setHealthScore(null);
+              setHealthScore2(null);
+            }}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+              compareMode
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-700 dark:text-gray-300'
+            }`}
+          >
+            Compare Domains
+          </button>
+          <button
+            onClick={() => {
+              setBulkMode(true);
+              setCompareMode(false);
+              setRecords([]);
+              setRecords2([]);
+              setHealthScore(null);
+              setHealthScore2(null);
             }}
             className={`px-4 py-2 rounded-md text-sm font-medium transition ${
               bulkMode
@@ -751,8 +822,42 @@ export default function DnsLookupTool() {
         </div>
       </div>
 
-      {/* Bulk Mode Input */}
-      {bulkMode ? (
+      {/* Compare Mode Input */}
+      {compareMode ? (
+        <div className="mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Domain 1</label>
+              <InputSection
+                domain={domain}
+                setDomain={(val) => {
+                  setDomain(val);
+                  validateDomain(val);
+                }}
+                handleLookup={() => {}}
+                loading={false}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Domain 2</label>
+              <input
+                type="text"
+                value={domain2}
+                onChange={(e) => setDomain2(e.target.value)}
+                placeholder="Enter second domain"
+                className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800"
+              />
+            </div>
+          </div>
+          <button
+            onClick={handleCompareLookup}
+            disabled={loading || loading2}
+            className="mt-3 w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition"
+          >
+            {loading || loading2 ? 'Comparing...' : 'Compare Domains'}
+          </button>
+        </div>
+      ) : bulkMode ? (
         <div className="mb-6">
           <label className="block text-sm font-medium mb-2">Enter domains (one per line)</label>
           <textarea
@@ -960,8 +1065,137 @@ export default function DnsLookupTool() {
         </div>
       )}
 
+      {/* Compare Mode Results */}
+      {compareMode && records.length > 0 && records2.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-2xl font-bold mb-4">Comparison Results</h2>
+
+          {/* Health Score Comparison */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+              <h3 className="font-bold text-lg mb-2">{domain}</h3>
+              {healthScore && (
+                <div className="flex items-center gap-2">
+                  <span className={`text-4xl font-bold ${
+                    healthScore.score >= 80 ? 'text-green-600' :
+                    healthScore.score >= 60 ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                    {healthScore.score}
+                  </span>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">/100</span>
+                  <span className={`text-2xl font-bold ml-2 ${
+                    healthScore.grade === 'A' ? 'text-green-600' :
+                    healthScore.grade === 'B' ? 'text-blue-600' :
+                    healthScore.grade === 'C' ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                    {healthScore.grade}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+              <h3 className="font-bold text-lg mb-2">{domain2}</h3>
+              {healthScore2 && (
+                <div className="flex items-center gap-2">
+                  <span className={`text-4xl font-bold ${
+                    healthScore2.score >= 80 ? 'text-green-600' :
+                    healthScore2.score >= 60 ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                    {healthScore2.score}
+                  </span>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">/100</span>
+                  <span className={`text-2xl font-bold ml-2 ${
+                    healthScore2.grade === 'A' ? 'text-green-600' :
+                    healthScore2.grade === 'B' ? 'text-blue-600' :
+                    healthScore2.grade === 'C' ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                    {healthScore2.grade}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Side-by-side Record Comparison */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Domain 1 Records */}
+            <div>
+              <h3 className="font-semibold mb-2 text-blue-600 dark:text-blue-400">{domain} ({records.length} records)</h3>
+              <div className="overflow-x-auto max-h-96 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="sticky top-0 bg-blue-100 dark:bg-blue-900">
+                    <tr>
+                      <th className="border border-blue-300 dark:border-blue-700 px-2 py-1 text-left">Type</th>
+                      <th className="border border-blue-300 dark:border-blue-700 px-2 py-1 text-left">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {records.map((record, idx) => (
+                      <tr key={idx} className="hover:bg-blue-50 dark:hover:bg-blue-900/30">
+                        <td className="border border-blue-200 dark:border-blue-800 px-2 py-1 font-mono text-xs">
+                          <span className={`px-1.5 py-0.5 rounded ${
+                            record.type === 'A' || record.type === 'AAAA' ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' :
+                            record.type === 'MX' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' :
+                            record.type === 'TXT' ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200' :
+                            'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200'
+                          }`}>
+                            {record.type}
+                          </span>
+                        </td>
+                        <td className="border border-blue-200 dark:border-blue-800 px-2 py-1 font-mono text-xs break-all">
+                          {record.value.length > 60 ? `${record.value.substring(0, 60)}...` : record.value}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Domain 2 Records */}
+            <div>
+              <h3 className="font-semibold mb-2 text-purple-600 dark:text-purple-400">{domain2} ({records2.length} records)</h3>
+              <div className="overflow-x-auto max-h-96 border border-purple-200 dark:border-purple-800 rounded-lg">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="sticky top-0 bg-purple-100 dark:bg-purple-900">
+                    <tr>
+                      <th className="border border-purple-300 dark:border-purple-700 px-2 py-1 text-left">Type</th>
+                      <th className="border border-purple-300 dark:border-purple-700 px-2 py-1 text-left">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {records2.map((record, idx) => (
+                      <tr key={idx} className="hover:bg-purple-50 dark:hover:bg-purple-900/30">
+                        <td className="border border-purple-200 dark:border-purple-800 px-2 py-1 font-mono text-xs">
+                          <span className={`px-1.5 py-0.5 rounded ${
+                            record.type === 'A' || record.type === 'AAAA' ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' :
+                            record.type === 'MX' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' :
+                            record.type === 'TXT' ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200' :
+                            'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200'
+                          }`}>
+                            {record.type}
+                          </span>
+                        </td>
+                        <td className="border border-purple-200 dark:border-purple-800 px-2 py-1 font-mono text-xs break-all">
+                          {record.value.length > 60 ? `${record.value.substring(0, 60)}...` : record.value}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Health Score */}
-      {healthScore && (
+      {healthScore && !compareMode && (
         <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-lg font-bold">DNS Health Score</h3>
