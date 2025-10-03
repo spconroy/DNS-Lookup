@@ -1613,6 +1613,13 @@ export default function DnsLookupTool() {
             <div className="mt-6 p-6 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
               <h3 className="text-xl font-bold mb-4">SSL/TLS Certificate Information</h3>
 
+              {/* Disclaimer */}
+              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 rounded">
+                <p className="text-sm text-blue-800 dark:text-blue-300">
+                  <strong>ℹ️ External API Notice:</strong> This feature uses Certificate Transparency logs via an external API (crt.sh) to retrieve certificate information. The domain name will be sent to this third-party service.
+                </p>
+              </div>
+
               {loadingSSL ? (
                 <div className="space-y-2">
                   {[1, 2, 3].map((i) => (
