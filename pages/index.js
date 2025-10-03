@@ -1517,6 +1517,7 @@ export default function DnsLookupTool() {
             </div>
           </div>
 
+          <div>
             <Input
               className="w-full md:w-1/3 border border-gray-300 dark:border-gray-600 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-white"
               type="text"
