@@ -307,6 +307,18 @@ export default function DnsLookupTool() {
     setSpfSummary(null);
     setDmarcSummary(null);
 
+    // Clear SSL/WHOIS/DNSSEC results from previous domain
+    setSslInfo(null);
+    setShowSSL(false);
+    setWhoisInfo(null);
+    setShowWhois(false);
+    setDnssecInfo(null);
+    setShowDnssec(false);
+    setPropagationResults([]);
+    setShowPropagation(false);
+    setReverseDNSResult(null);
+    setShowDNSMap(false);
+
     try {
       const response = await fetch(`/api/dns-lookup?domain=${cleanDomain}`);
       const data = await response.json();
@@ -362,6 +374,18 @@ export default function DnsLookupTool() {
     setLoading(true);
     setBulkResults([]);
     setValidationError('');
+
+    // Clear SSL/WHOIS/DNSSEC results from previous lookups
+    setSslInfo(null);
+    setShowSSL(false);
+    setWhoisInfo(null);
+    setShowWhois(false);
+    setDnssecInfo(null);
+    setShowDnssec(false);
+    setPropagationResults([]);
+    setShowPropagation(false);
+    setReverseDNSResult(null);
+    setShowDNSMap(false);
 
     const results = [];
 
