@@ -1864,8 +1864,8 @@ export default function DnsLookupTool() {
 
                     return (
                       <>
-                        {/* Active Certificates */}
-                        {activeCerts.length > 0 && (
+                        {/* Active Certificates - or show expired if no active ones */}
+                        {activeCerts.length > 0 ? (
                           <>
                             <h4 className="font-semibold mb-3">Active Certificate{activeCerts.length > 1 ? 's' : ''} ({activeCerts.length})</h4>
                             <div className="space-y-3">
@@ -1935,22 +1935,80 @@ export default function DnsLookupTool() {
                                 })}
                             </div>
                           </>
-                        )}
+                        ) : expiredCerts.length > 0 ? (
+                          <>
+                            {/* No active certs - show most recent expired cert in main section */}
+                            <h4 className="font-semibold mb-3 text-red-600 dark:text-red-400">Most Recent Certificate (Expired)</h4>
+                            <div className="space-y-3">
+                              {(() => {
+                                const cert = expiredCerts[0]; // Most recent expired
+                                const expiryDate = new Date(cert.notAfter);
+                                const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
 
-                        {/* Expired Certificates - Collapsible */}
-                        {expiredCerts.length > 0 && (
+                                return (
+                                  <div className="p-4 rounded-lg border-2 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800">
+                                    <div className="flex items-start justify-between mb-3">
+                                      <div>
+                                        <span className="text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                                          Expired {Math.abs(daysUntilExpiry)} days ago
+                                        </span>
+                                      </div>
+                                      <span className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-1 rounded">
+                                        Most Recent
+                                      </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                      <div>
+                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
+                                        <p className="font-mono break-all">{cert.commonName}</p>
+                                      </div>
+                                      <div>
+                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
+                                        <p className="text-xs break-all">{cert.issuer}</p>
+                                      </div>
+                                      <div>
+                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
+                                        <p>{new Date(cert.notBefore).toLocaleDateString()}</p>
+                                      </div>
+                                      <div>
+                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
+                                        <p className="text-red-600 dark:text-red-400 font-semibold">
+                                          {new Date(cert.notAfter).toLocaleDateString()}
+                                        </p>
+                                      </div>
+                                      <div className="md:col-span-2">
+                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
+                                        <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </>
+                        ) : null}
+
+                        {/* Additional Expired Certificates - Collapsible */}
+                        {(activeCerts.length > 0 && expiredCerts.length > 0) || (activeCerts.length === 0 && expiredCerts.length > 1) ? (
                           <div className="mt-6">
                             <button
                               onClick={() => setShowExpiredCerts(!showExpiredCerts)}
                               className="flex items-center justify-between w-full p-3 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition"
                             >
-                              <h4 className="font-semibold">Expired Certificates ({expiredCerts.length})</h4>
+                              <h4 className="font-semibold">
+                                {activeCerts.length > 0
+                                  ? `Expired Certificates (${expiredCerts.length})`
+                                  : `Older Expired Certificates (${expiredCerts.length - 1})`
+                                }
+                              </h4>
                               <span className="text-gray-500">{showExpiredCerts ? '▼' : '▶'}</span>
                             </button>
 
                             {showExpiredCerts && (
                               <div className="mt-3 space-y-3">
                                 {expiredCerts.map((cert, idx) => {
+                                  // Skip first expired cert if no active certs (already shown above)
+                                  if (activeCerts.length === 0 && idx === 0) return null;
                                   const expiryDate = new Date(cert.notAfter);
                                   const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
                                   const isExpired = true;
@@ -1994,7 +2052,7 @@ export default function DnsLookupTool() {
                               </div>
                             )}
                           </div>
-                        )}
+                        ) : null}
 
                         <div className="mt-4 text-xs text-gray-600 dark:text-gray-400">
                           Data from Certificate Transparency Logs (crt.sh)
