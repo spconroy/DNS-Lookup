@@ -177,6 +177,8 @@ export default function DnsLookupTool() {
   const [loadingWhois, setLoadingWhois] = useState(false);
   const [showWhois, setShowWhois] = useState(false);
   const [dnssecInfo, setDnssecInfo] = useState(null);
+  const [showDnssecModal, setShowDnssecModal] = useState(false);
+  const [dnssecModalContent, setDnssecModalContent] = useState({ title: '', content: '' });
   const [loadingDnssec, setLoadingDnssec] = useState(false);
   const [showDnssec, setShowDnssec] = useState(false);
   const [activeTab, setActiveTab] = useState('dns'); // dns, dnssec, ssl, whois, propagation
@@ -218,11 +220,22 @@ export default function DnsLookupTool() {
     // Remove protocol if present
     let cleanDomain = input.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
 
+    // Check if it's an IP address (IPv4 or IPv6)
+    const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
+
+    // If it's an IP address, it's valid for reverse DNS
+    if (ipv4Regex.test(cleanDomain) || ipv6Regex.test(cleanDomain)) {
+      setValidationError('');
+      setDomain(cleanDomain);
+      return true;
+    }
+
     // Basic domain validation
     const domainRegex = /^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$/i;
 
     if (!domainRegex.test(cleanDomain)) {
-      setValidationError('Invalid domain format');
+      setValidationError('Invalid domain or IP address format');
       return false;
     }
 
@@ -328,12 +341,25 @@ export default function DnsLookupTool() {
       const data = await response.json();
 
       if (response.ok) {
-        const mappedRecords = data.map(record => ({
-          type: dnsRecordTypeMap[record.type] || record.type,
-          value: record.value,
-          ttl: record.ttl,
-          timestamp: Date.now()
-        }));
+        const mappedRecords = data.map(record => {
+          // Extract subdomain from full domain name
+          let hostname = record.name;
+          if (hostname && hostname.endsWith(`.${cleanDomain}`)) {
+            // Extract subdomain (e.g., "pgdb01.inventivehq.com" -> "pgdb01")
+            hostname = hostname.slice(0, -(cleanDomain.length + 1));
+          } else if (hostname === cleanDomain) {
+            // Root domain
+            hostname = '@';
+          }
+
+          return {
+            type: dnsRecordTypeMap[record.type] || record.type,
+            value: record.value,
+            ttl: record.ttl,
+            timestamp: Date.now(),
+            hostname: hostname
+          };
+        });
         setRecords(mappedRecords);
         addToHistory(cleanDomain);
 
@@ -552,20 +578,30 @@ export default function DnsLookupTool() {
   };
 
   // SSL Certificate Checker
-  const checkSSL = async () => {
+  const checkSSL = async (offset = 0, append = false) => {
     if (!domain) return;
 
     setLoadingSSL(true);
     setShowSSL(true);
-    setSslInfo(null);
+    if (!append) {
+      setSslInfo(null);
+    }
 
     try {
       const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-      const response = await fetch(`/api/ssl-check?domain=${cleanDomain}`);
+      const response = await fetch(`/api/ssl-check?domain=${cleanDomain}&offset=${offset}`);
       const data = await response.json();
 
       if (response.ok) {
-        setSslInfo(data);
+        if (append && sslInfo) {
+          // Append new certificates to existing ones
+          setSslInfo({
+            ...data,
+            certificates: [...sslInfo.certificates, ...data.certificates],
+          });
+        } else {
+          setSslInfo(data);
+        }
       } else {
         setSslInfo({
           error: data.error || 'Failed to fetch SSL certificate info',
@@ -683,19 +719,29 @@ export default function DnsLookupTool() {
 
     const results = [];
 
+    // Query all record types from each DNS server
     for (const dns of dnsServers) {
       try {
-        // Since we can't query specific DNS servers from the browser, we'll use the default
-        // In a real implementation, this would query via a backend API
         const response = await fetch(`/api/dns-lookup?domain=${domain}`);
         const data = await response.json();
 
         if (response.ok) {
-          const aRecords = data.filter(r => dnsRecordTypeMap[r.type] === 'A');
+          // Organize records by type
+          const recordsByType = {};
+          data.forEach(record => {
+            const type = dnsRecordTypeMap[record.type];
+            if (type) {
+              if (!recordsByType[type]) {
+                recordsByType[type] = [];
+              }
+              recordsByType[type].push(record.value);
+            }
+          });
+
           results.push({
             ...dns,
             status: 'success',
-            records: aRecords.length > 0 ? aRecords.map(r => r.value).join(', ') : 'No A records',
+            recordsByType,
             timestamp: new Date().toISOString()
           });
         } else {
@@ -719,7 +765,36 @@ export default function DnsLookupTool() {
       await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    setPropagationResults(results);
+    // Analyze propagation status - find inconsistencies
+    const propagationStatus = {};
+    const recordTypes = new Set();
+
+    // Collect all record types across all servers
+    results.forEach(result => {
+      if (result.recordsByType) {
+        Object.keys(result.recordsByType).forEach(type => recordTypes.add(type));
+      }
+    });
+
+    // For each record type, check if values match across all servers
+    recordTypes.forEach(type => {
+      const valuesPerServer = results
+        .filter(r => r.status === 'success' && r.recordsByType[type])
+        .map(r => ({
+          server: r.name,
+          values: r.recordsByType[type].sort().join('|')
+        }));
+
+      const uniqueValues = [...new Set(valuesPerServer.map(v => v.values))];
+
+      propagationStatus[type] = {
+        isPropagating: uniqueValues.length > 1,
+        values: uniqueValues,
+        servers: valuesPerServer
+      };
+    });
+
+    setPropagationResults({ servers: results, status: propagationStatus });
     setCheckingPropagation(false);
   };
 
@@ -992,8 +1067,8 @@ export default function DnsLookupTool() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-900 rounded-lg shadow-lg">
-      {/* Mode Toggle */}
-      <div className="flex justify-center mb-4">
+      {/* Mode Toggle - Hidden */}
+      <div className="hidden">
         <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 p-1">
           <button
             onClick={() => {
@@ -1113,6 +1188,11 @@ export default function DnsLookupTool() {
               }}
               handleLookup={() => handleLookup()}
               loading={loading}
+              handleReverseDNS={() => {
+                setReverseIP(domain);
+                handleReverseDNS();
+              }}
+              loadingReverse={loadingReverse}
             />
 
         {/* Validation Error */}
@@ -1528,6 +1608,16 @@ export default function DnsLookupTool() {
                 WHOIS {loadingWhois && <span className="ml-1">⟳</span>}
               </button>
               <button
+                onClick={() => handleTabSwitch('email')}
+                className={`px-4 py-3 border-b-2 font-medium text-sm transition ${
+                  activeTab === 'email'
+                    ? 'border-orange-500 text-orange-600 dark:text-orange-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
+              >
+                Email Security
+              </button>
+              <button
                 onClick={() => handleTabSwitch('propagation')}
                 className={`px-4 py-3 border-b-2 font-medium text-sm transition ${
                   activeTab === 'propagation'
@@ -1572,22 +1662,6 @@ export default function DnsLookupTool() {
                 >
                   {showDNSMap ? 'Hide' : 'Show'} DNS Map
                 </Button>
-                <div className="flex gap-2 items-center ml-auto">
-                  <input
-                    type="text"
-                    value={reverseIP}
-                    onChange={(e) => setReverseIP(e.target.value)}
-                    placeholder="Enter IP for reverse lookup"
-                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800"
-                  />
-                  <Button
-                    onClick={handleReverseDNS}
-                    disabled={loadingReverse}
-                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-400 text-white rounded-lg transition text-sm whitespace-nowrap"
-                  >
-                    {loadingReverse ? 'Looking up...' : 'Reverse DNS'}
-                  </Button>
-                </div>
               </div>
 
               <div className="mt-4">
@@ -1722,7 +1796,7 @@ export default function DnsLookupTool() {
             </div>
           )}
 
-          {propagationResults.length > 0 && (
+          {propagationResults?.status && (
             <div className="mt-6 p-6 bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-900/20 dark:to-cyan-900/20 rounded-lg border border-teal-200 dark:border-teal-800">
               <h3 className="text-xl font-bold mb-4">DNS Propagation Check</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
@@ -1736,43 +1810,110 @@ export default function DnsLookupTool() {
                   ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {propagationResults.map((result, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-4 rounded-lg border-2 ${
-                        result.status === 'success'
-                          ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20'
-                          : 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <h4 className="font-bold">{result.name}</h4>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">{result.location}</p>
+                <>
+                  {/* Propagation Status Summary */}
+                  {(() => {
+                    const propagatingRecords = Object.entries(propagationResults.status).filter(([type, data]) => data.isPropagating);
+                    const fullyPropagated = Object.entries(propagationResults.status).filter(([type, data]) => !data.isPropagating);
+
+                    return (
+                      <>
+                        {propagatingRecords.length > 0 && (
+                          <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-500 rounded">
+                            <h4 className="font-bold text-yellow-800 dark:text-yellow-300 mb-2">⚠️ Propagation In Progress</h4>
+                            <p className="text-sm text-yellow-700 dark:text-yellow-400 mb-3">
+                              {propagatingRecords.length} record type{propagatingRecords.length > 1 ? 's' : ''} showing inconsistent values across DNS servers:
+                            </p>
+                            <div className="space-y-3">
+                              {propagatingRecords.map(([type, data]) => (
+                                <div key={type} className="bg-white dark:bg-gray-800 p-3 rounded">
+                                  <div className="font-semibold text-yellow-800 dark:text-yellow-300 mb-2">{type} Record</div>
+                                  <div className="text-sm space-y-1">
+                                    {data.servers.map((s, idx) => (
+                                      <div key={idx} className="flex justify-between items-center">
+                                        <span className="text-gray-600 dark:text-gray-400">{s.server}:</span>
+                                        <code className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{s.values.replace(/\|/g, ', ')}</code>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {fullyPropagated.length > 0 && (
+                          <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border-l-4 border-green-500 rounded">
+                            <h4 className="font-bold text-green-800 dark:text-green-300 mb-2">✓ Fully Propagated</h4>
+                            <p className="text-sm text-green-700 dark:text-green-400 mb-3">
+                              {fullyPropagated.length} record type{fullyPropagated.length > 1 ? 's' : ''} consistent across all DNS servers:
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              {fullyPropagated.map(([type, data]) => (
+                                <div key={type} className="bg-white dark:bg-gray-800 p-2 rounded">
+                                  <span className="font-semibold text-green-800 dark:text-green-300">{type}:</span>{' '}
+                                  <code className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{data.values[0].replace(/\|/g, ', ')}</code>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+
+                  {/* Server Details */}
+                  <details className="mt-6">
+                    <summary className="cursor-pointer font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                      View Server Details ({propagationResults.servers.length} servers checked)
+                    </summary>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                      {propagationResults.servers.map((result, idx) => (
+                        <div
+                          key={idx}
+                          className={`p-4 rounded-lg border-2 ${
+                            result.status === 'success'
+                              ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20'
+                              : 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <h4 className="font-bold">{result.name}</h4>
+                              <p className="text-xs text-gray-600 dark:text-gray-400">{result.location}</p>
+                            </div>
+                            <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                              result.status === 'success'
+                                ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
+                                : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'
+                            }`}>
+                              {result.status === 'success' ? 'Resolved' : 'Failed'}
+                            </span>
+                          </div>
+                          <div className="text-sm space-y-1 mt-2">
+                            {result.status === 'success' ? (
+                              Object.entries(result.recordsByType).map(([type, values]) => (
+                                <div key={type} className="font-mono bg-white dark:bg-gray-800 p-2 rounded text-xs">
+                                  <span className="font-semibold">{type}:</span> {values.join(', ')}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-red-600 dark:text-red-400">{result.error}</div>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                            Server: {result.server}
+                          </div>
                         </div>
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                          result.status === 'success'
-                            ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
-                            : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'
-                        }`}>
-                          {result.status === 'success' ? 'Resolved' : 'Failed'}
-                        </span>
-                      </div>
-                      <div className="text-sm font-mono bg-white dark:bg-gray-800 p-2 rounded">
-                        {result.status === 'success' ? result.records : result.error}
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                        Server: {result.server}
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </details>
+                </>
               )}
 
-              {!checkingPropagation && propagationResults.length > 0 && (
+              {!checkingPropagation && propagationResults?.servers && (
                 <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
-                  ✓ Checked {propagationResults.length} DNS servers globally
+                  ✓ Checked {propagationResults.servers.length} DNS servers globally
                 </div>
               )}
             </div>
@@ -1794,13 +1935,6 @@ export default function DnsLookupTool() {
           {sslInfo && (
             <div className="mt-6 p-6 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
               <h3 className="text-xl font-bold mb-4">SSL/TLS Certificate Information</h3>
-
-              {/* Disclaimer */}
-              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 rounded">
-                <p className="text-sm text-blue-800 dark:text-blue-300">
-                  <strong>ℹ️ External API Notice:</strong> This feature uses Certificate Transparency logs via an external API (crt.sh) to retrieve certificate information. The domain name will be sent to this third-party service.
-                </p>
-              </div>
 
               {loadingSSL ? (
                 <div className="space-y-2">
@@ -1848,218 +1982,163 @@ export default function DnsLookupTool() {
                     </div>
                   )}
 
-                  {/* Certificate List */}
-                  {(() => {
-                    const now = new Date();
-                    const activeCerts = sslInfo.certificates.filter(cert => {
-                      const expiryDate = new Date(cert.notAfter);
-                      const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
-                      return daysUntilExpiry >= 0;
-                    });
-                    const expiredCerts = sslInfo.certificates.filter(cert => {
-                      const expiryDate = new Date(cert.notAfter);
-                      const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
-                      return daysUntilExpiry < 0;
-                    });
+                  {/* Certificate List - Show Valid Certificates and Recently Expired */}
+                  <div>
+                    {(() => {
+                      const now = new Date();
+                      const validCerts = [];
+                      const recentlyExpiredCerts = [];
 
-                    return (
-                      <>
-                        {/* Active Certificates - or show expired if no active ones */}
-                        {activeCerts.length > 0 ? (
-                          <>
-                            <h4 className="font-semibold mb-3">Active Certificate{activeCerts.length > 1 ? 's' : ''} ({activeCerts.length})</h4>
-                            <div className="space-y-3">
-                              {activeCerts.map((cert, idx) => {
-                                const expiryDate = new Date(cert.notAfter);
-                                const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
-                                const isExpired = false;
-                                const isExpiringSoon = daysUntilExpiry < 30;
+                      sslInfo.certificates.forEach((cert, idx) => {
+                        const expiryDate = new Date(cert.notAfter);
+                        const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
+                        const isExpired = daysUntilExpiry < 0;
+                        const daysSinceExpiry = Math.abs(daysUntilExpiry);
 
-                                return (
-                        <div key={idx} className={`p-4 rounded-lg border-2 ${
-                          isExpired
-                            ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
-                            : isExpiringSoon
-                            ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
-                            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
-                        }`}>
-                          <div className="flex items-start justify-between mb-3">
-                            <div>
-                              <span className={`text-xs font-semibold px-2 py-1 rounded ${
-                                isExpired
-                                  ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                                  : isExpiringSoon
-                                  ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                                  : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                              }`}>
-                                {isExpired
-                                  ? `Expired ${Math.abs(daysUntilExpiry)} days ago`
-                                  : isExpiringSoon
-                                  ? `Expires in ${daysUntilExpiry} days`
-                                  : `Valid for ${daysUntilExpiry} more days`
-                                }
-                              </span>
-                            </div>
-                            {idx === 0 && (
-                              <span className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-1 rounded">
-                                Most Recent
-                              </span>
-                            )}
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                            <div>
-                              <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
-                              <p className="font-mono break-all">{cert.commonName}</p>
-                            </div>
-                            <div>
-                              <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
-                              <p className="text-xs break-all">{cert.issuer}</p>
-                            </div>
-                            <div>
-                              <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
-                              <p>{new Date(cert.notBefore).toLocaleDateString()}</p>
-                            </div>
-                            <div>
-                              <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
-                              <p className={isExpired ? 'text-red-600 dark:text-red-400 font-semibold' : ''}>
-                                {new Date(cert.notAfter).toLocaleDateString()}
-                              </p>
-                            </div>
-                            <div className="md:col-span-2">
-                              <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
-                              <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
-                            </div>
-                          </div>
-                        </div>
-                                  );
-                                })}
-                            </div>
-                          </>
-                        ) : expiredCerts.length > 0 ? (
-                          <>
-                            {/* No active certs - show most recent expired cert in main section */}
-                            <h4 className="font-semibold mb-3 text-red-600 dark:text-red-400">Most Recent Certificate (Expired)</h4>
-                            <div className="space-y-3">
-                              {(() => {
-                                const cert = expiredCerts[0]; // Most recent expired
-                                const expiryDate = new Date(cert.notAfter);
-                                const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
+                        if (!isExpired) {
+                          validCerts.push({ cert, idx });
+                        } else if (daysSinceExpiry <= 90) {
+                          recentlyExpiredCerts.push({ cert, idx });
+                        }
+                      });
 
-                                return (
-                                  <div className="p-4 rounded-lg border-2 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800">
-                                    <div className="flex items-start justify-between mb-3">
-                                      <div>
-                                        <span className="text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                                          Expired {Math.abs(daysUntilExpiry)} days ago
-                                        </span>
-                                      </div>
+                      // Check if recently expired certs have been replaced
+                      const unreplacedExpiredCerts = recentlyExpiredCerts.filter(expired => {
+                        const expiredCN = expired.cert.commonName;
+                        return !validCerts.some(valid => valid.cert.commonName === expiredCN);
+                      });
+
+                      return (
+                        <>
+                          <h4 className="font-semibold mb-3">Current Certificates</h4>
+                          <div className="space-y-3">
+                            {/* Show valid certificates */}
+                            {validCerts.map(({ cert, idx }) => {
+                              const expiryDate = new Date(cert.notAfter);
+                              const issueDate = new Date(cert.notBefore);
+                              const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
+                              const isExpired = false;
+                              const isExpiringSoon = daysUntilExpiry < 30;
+
+                              return (
+                                <div key={idx} className={`p-4 rounded-lg border-2 ${
+                                  isExpiringSoon
+                                    ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                                }`}>
+                                  <div className="flex items-start justify-between mb-3">
+                                    <div>
+                                      <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                                        isExpiringSoon
+                                          ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                                          : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                      }`}>
+                                        {isExpiringSoon
+                                          ? `Expires in ${daysUntilExpiry} days`
+                                          : `Valid for ${daysUntilExpiry} more days`
+                                        }
+                                      </span>
+                                    </div>
+                                    {idx === 0 && (
                                       <span className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-1 rounded">
                                         Most Recent
                                       </span>
+                                    )}
+                                  </div>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
+                                      <p className="font-mono break-all">{cert.commonName}</p>
                                     </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                                      <div>
-                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
-                                        <p className="font-mono break-all">{cert.commonName}</p>
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
-                                        <p className="text-xs break-all">{cert.issuer}</p>
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
-                                        <p>{new Date(cert.notBefore).toLocaleDateString()}</p>
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
-                                        <p className="text-red-600 dark:text-red-400 font-semibold">
-                                          {new Date(cert.notAfter).toLocaleDateString()}
-                                        </p>
-                                      </div>
-                                      <div className="md:col-span-2">
-                                        <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
-                                        <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
-                                      </div>
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
+                                      <p className="text-xs break-all">{cert.issuer}</p>
+                                    </div>
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
+                                      <p>{issueDate.toLocaleDateString()} ({issueDate.toLocaleTimeString()})</p>
+                                    </div>
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
+                                      <p>{expiryDate.toLocaleDateString()} ({expiryDate.toLocaleTimeString()})</p>
+                                    </div>
+                                    <div className="md:col-span-2">
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
+                                      <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
                                     </div>
                                   </div>
-                                );
-                              })()}
-                            </div>
-                          </>
-                        ) : null}
+                                </div>
+                              );
+                            })}
 
-                        {/* Additional Expired Certificates - Collapsible */}
-                        {(activeCerts.length > 0 && expiredCerts.length > 0) || (activeCerts.length === 0 && expiredCerts.length > 1) ? (
-                          <div className="mt-6">
-                            <button
-                              onClick={() => setShowExpiredCerts(!showExpiredCerts)}
-                              className="flex items-center justify-between w-full p-3 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition"
-                            >
-                              <h4 className="font-semibold">
-                                {activeCerts.length > 0
-                                  ? `Expired Certificates (${expiredCerts.length})`
-                                  : `Older Expired Certificates (${expiredCerts.length - 1})`
-                                }
-                              </h4>
-                              <span className="text-gray-500">{showExpiredCerts ? '▼' : '▶'}</span>
-                            </button>
+                            {/* Show recently expired certificates that haven't been replaced */}
+                            {unreplacedExpiredCerts.map(({ cert, idx }) => {
+                              const expiryDate = new Date(cert.notAfter);
+                              const issueDate = new Date(cert.notBefore);
+                              const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
+                              const daysSinceExpiry = Math.abs(daysUntilExpiry);
 
-                            {showExpiredCerts && (
-                              <div className="mt-3 space-y-3">
-                                {expiredCerts.map((cert, idx) => {
-                                  // Skip first expired cert if no active certs (already shown above)
-                                  if (activeCerts.length === 0 && idx === 0) return null;
-                                  const expiryDate = new Date(cert.notAfter);
-                                  const daysUntilExpiry = Math.floor((expiryDate - now) / (1000 * 60 * 60 * 24));
-                                  const isExpired = true;
-
-                                  return (
-                                    <div key={idx} className="p-4 rounded-lg border-2 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 opacity-75">
-                                      <div className="flex items-start justify-between mb-3">
-                                        <div>
-                                          <span className="text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                                            Expired {Math.abs(daysUntilExpiry)} days ago
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                                        <div>
-                                          <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
-                                          <p className="font-mono break-all">{cert.commonName}</p>
-                                        </div>
-                                        <div>
-                                          <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
-                                          <p className="text-xs break-all">{cert.issuer}</p>
-                                        </div>
-                                        <div>
-                                          <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
-                                          <p>{new Date(cert.notBefore).toLocaleDateString()}</p>
-                                        </div>
-                                        <div>
-                                          <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
-                                          <p className="text-red-600 dark:text-red-400 font-semibold">
-                                            {new Date(cert.notAfter).toLocaleDateString()}
-                                          </p>
-                                        </div>
-                                        <div className="md:col-span-2">
-                                          <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
-                                          <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
-                                        </div>
-                                      </div>
+                              return (
+                                <div key={`expired-${idx}`} className={`p-4 rounded-lg border-2 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800`}>
+                                  <div className="flex items-start justify-between mb-3">
+                                    <div>
+                                      <span className="text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                                        Expired {daysSinceExpiry} days ago (not replaced)
+                                      </span>
                                     </div>
-                                  );
-                                })}
-                              </div>
-                            )}
+                                    <span className="text-xs bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 px-2 py-1 rounded">
+                                      Recently Expired
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Common Name:</span>
+                                      <p className="font-mono break-all">{cert.commonName}</p>
+                                    </div>
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Issuer:</span>
+                                      <p className="text-xs break-all">{cert.issuer}</p>
+                                    </div>
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Valid From:</span>
+                                      <p>{issueDate.toLocaleDateString()} ({issueDate.toLocaleTimeString()})</p>
+                                    </div>
+                                    <div>
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Valid Until:</span>
+                                      <p className="text-red-600 dark:text-red-400 font-semibold">
+                                        {expiryDate.toLocaleDateString()} ({expiryDate.toLocaleTimeString()})
+                                      </p>
+                                    </div>
+                                    <div className="md:col-span-2">
+                                      <span className="font-semibold text-gray-600 dark:text-gray-400">Serial Number:</span>
+                                      <p className="font-mono text-xs break-all">{cert.serialNumber}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        ) : null}
 
-                        <div className="mt-4 text-xs text-gray-600 dark:text-gray-400">
-                          Data from Certificate Transparency Logs (crt.sh)
-                        </div>
-                      </>
-                    );
-                  })()}
+                          {/* Load More Button */}
+                          {sslInfo.pagination?.hasMore && (
+                            <div className="mt-6 text-center">
+                              <button
+                                onClick={() => checkSSL(sslInfo.pagination.nextOffset, true)}
+                                disabled={loadingSSL}
+                                className="px-6 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white rounded-lg transition"
+                              >
+                                {loadingSSL ? 'Loading...' : `Load More Certificates (${sslInfo.pagination.total - sslInfo.pagination.offset - sslInfo.pagination.limit} remaining)`}
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="mt-4 text-xs text-gray-600 dark:text-gray-400">
+                            Showing {sslInfo.pagination ? `${Math.min(sslInfo.pagination.offset + sslInfo.certificates.length, sslInfo.pagination.total)} of ${sslInfo.pagination.total}` : sslInfo.certificates.length} certificate{sslInfo.certificates.length !== 1 ? 's' : ''}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -2249,12 +2328,48 @@ export default function DnsLookupTool() {
                     <div className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
                       <h4 className="font-semibold mb-3">Validation Details</h4>
                       <ul className="space-y-2 text-sm">
-                        {dnssecInfo.details.map((detail, idx) => (
-                          <li key={idx} className="flex items-start">
-                            <span className="mr-2">{detail.includes('✓') || detail.includes('Using') ? '✓' : detail.includes('Missing') ? '⚠️' : '•'}</span>
-                            <span>{detail}</span>
-                          </li>
-                        ))}
+                        {dnssecInfo.details.map((detail, idx) => {
+                          const isMissing = detail.includes('Missing');
+                          const recordType = isMissing ? detail.match(/Missing (\w+)/)?.[1] : null;
+
+                          const getExplanation = (type) => {
+                            const explanations = {
+                              'RRSIG': {
+                                title: 'Missing RRSIG Records',
+                                content: 'RRSIG (Resource Record Signature) records are digital signatures for DNS records. They are essential for DNSSEC validation.\n\n**Why this matters:**\n• Without RRSIG records, DNS responses cannot be authenticated\n• Your domain is vulnerable to DNS spoofing and cache poisoning attacks\n• DNSSEC protection is incomplete or non-functional\n\n**How to fix:**\n1. Enable DNSSEC signing at your DNS provider\n2. Ensure your authoritative nameservers support DNSSEC\n3. Verify that zone signing is properly configured\n4. Check that your DNS records are being signed automatically'
+                              },
+                              'DS': {
+                                title: 'Missing DS Records',
+                                content: 'DS (Delegation Signer) records establish the chain of trust between parent and child zones in DNSSEC.\n\n**Why this matters:**\n• DS records must be published in the parent zone (.com, .org, etc.)\n• Without DS records, DNSSEC validation fails\n• The chain of trust from root to your domain is broken\n\n**How to fix:**\n1. Generate DNSSEC keys at your DNS provider\n2. Obtain the DS record values\n3. Submit DS records to your domain registrar\n4. Wait for parent zone propagation (can take 24-48 hours)'
+                              },
+                              'DNSKEY': {
+                                title: 'Missing DNSKEY Records',
+                                content: 'DNSKEY (DNS Public Key) records contain the public keys used to verify RRSIG signatures.\n\n**Why this matters:**\n• DNSKEY records are required for signature verification\n• Resolvers need these keys to validate signed responses\n• Without them, DNSSEC cannot function\n\n**How to fix:**\n1. Enable DNSSEC at your DNS hosting provider\n2. Generate Zone Signing Keys (ZSK) and Key Signing Keys (KSK)\n3. Publish DNSKEY records in your zone\n4. Ensure automatic key rotation is configured'
+                              }
+                            };
+                            return explanations[type] || { title: `Missing ${type} Records`, content: `${type} records are required for complete DNSSEC validation.` };
+                          };
+
+                          return (
+                            <li key={idx} className="flex items-start">
+                              <span className="mr-2">{detail.includes('✓') || detail.includes('Using') ? '✓' : isMissing ? '⚠️' : '•'}</span>
+                              {isMissing && recordType ? (
+                                <button
+                                  onClick={() => {
+                                    const explanation = getExplanation(recordType);
+                                    setDnssecModalContent(explanation);
+                                    setShowDnssecModal(true);
+                                  }}
+                                  className="text-left underline decoration-dotted hover:text-blue-600 dark:hover:text-blue-400 transition"
+                                >
+                                  {detail}
+                                </button>
+                              ) : (
+                                <span>{detail}</span>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   )}
@@ -2342,6 +2457,7 @@ export default function DnsLookupTool() {
               <thead>
                 <tr className="bg-gray-100 dark:bg-gray-800">
                   <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left">Type</th>
+                  <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left">Record Name</th>
                   <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left">Value</th>
                   <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left">TTL</th>
                   <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-center">Copy</th>
@@ -2364,6 +2480,9 @@ export default function DnsLookupTool() {
                         }`}>
                           {record.type}
                         </span>
+                      </td>
+                      <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm break-all">
+                        {record.hostname || '-'}
                       </td>
                       <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-mono text-sm break-all">
                         {record.value}
@@ -2402,7 +2521,7 @@ export default function DnsLookupTool() {
                     </tr>
                     {expandedRecords.has(index) && (
                       <tr key={`${index}-details`}>
-                        <td colSpan="4" className="border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-6 py-4">
+                        <td colSpan="5" className="border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-6 py-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {getRecordDetails(record).map((detail, i) => (
                               <div key={i} className="flex items-start">
@@ -2428,8 +2547,11 @@ export default function DnsLookupTool() {
           </>
           )}
 
-          {/* SPF Record Summary - shown in DNS tab */}
-          {activeTab === 'dns' && spfSummary && (
+          {/* Email Security Tab Content */}
+          {activeTab === 'email' && (
+            <>
+          {/* SPF Record Summary */}
+          {spfSummary && (
             <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold">SPF Record Analysis</h3>
@@ -2485,8 +2607,8 @@ export default function DnsLookupTool() {
             </div>
           )}
 
-          {/* DMARC Record Summary - shown in DNS tab */}
-          {activeTab === 'dns' && dmarcSummary && (
+          {/* DMARC Record Summary */}
+          {dmarcSummary && (
             <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold">DMARC Record Analysis</h3>
@@ -2565,12 +2687,55 @@ export default function DnsLookupTool() {
               )}
             </div>
           )}
+        </>
+      )}
 
-          {/* Keyboard Shortcuts Help */}
+      {/* Keyboard Shortcuts Help */}
           <div className="mt-6 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-xs text-gray-600 dark:text-gray-400">
             <strong>Keyboard Shortcuts:</strong> Ctrl/Cmd+K (focus search) | Ctrl/Cmd+L (clear)
           </div>
         </>
+      )}
+
+      {/* DNSSEC Explanation Modal */}
+      {showDnssecModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShowDnssecModal(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold">{dnssecModalContent.title}</h3>
+                <button
+                  onClick={() => setShowDnssecModal(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="prose dark:prose-invert max-w-none">
+                {dnssecModalContent.content.split('\n').map((line, idx) => {
+                  if (line.startsWith('**') && line.endsWith('**')) {
+                    return <h4 key={idx} className="font-semibold mt-4 mb-2">{line.replace(/\*\*/g, '')}</h4>;
+                  } else if (line.startsWith('•')) {
+                    return <li key={idx} className="ml-4">{line.substring(1).trim()}</li>;
+                  } else if (line.match(/^\d+\./)) {
+                    return <li key={idx} className="ml-4">{line.substring(line.indexOf('.') + 1).trim()}</li>;
+                  } else if (line.trim()) {
+                    return <p key={idx} className="mb-2">{line}</p>;
+                  }
+                  return <br key={idx} />;
+                })}
+              </div>
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={() => setShowDnssecModal(false)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

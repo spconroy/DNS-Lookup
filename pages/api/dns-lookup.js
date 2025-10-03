@@ -88,6 +88,7 @@ export default async function handler(req) {
             type: record.type,
             value: record.data,
             ttl: record.TTL,
+            name: record.name,
         }));
 
         return new Response(JSON.stringify(formattedRecords), {
